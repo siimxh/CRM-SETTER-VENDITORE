@@ -1311,7 +1311,12 @@ function wireAppuntamentiEvents() {
       if (!apt) return;
       const val = btn.dataset.val;
       apt.presentedStatus = val;
-      apt.presentedAt = val === 'presented' ? new Date().toISOString() : apt.presentedAt;
+      // CORREZIONE (segnalata dall'utente): presentedAt deve seguire la data/ora
+      // dell'appuntamento stesso (scheduledAt), NON il momento in cui l'utente clicca
+      // "Presentato" nell'app — spesso si registra un appuntamento già svolto giorni
+      // prima (es. oggi 10, appuntamento del 6): le commissioni derivate (show-up,
+      // cash collected) vanno segnate al 6, non al giorno del click.
+      apt.presentedAt = val === 'presented' ? apt.scheduledAt : apt.presentedAt;
       persist();
       renderAppuntamenti();
     });
