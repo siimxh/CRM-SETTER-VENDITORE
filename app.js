@@ -620,10 +620,14 @@ const FUNNEL_STEPS_SETTER = [
   { key: 'commissioniTot', label: 'Commissioni Tot.', money: true }
 ];
 
-// Per il venditore, "appuntamentiFissati" è in realtà "Appuntamenti Assegnati": un dato
-// manuale (non un obiettivo), gestito a parte con isAssignedField — vedi renderFunnelStep.
+// Per il venditore, "appuntamentiFissati" è in realtà "Appuntamenti Assegnati": conteggio
+// AUTOMATICO delle righe CRM create con ruolo Venditore nel periodo selezionato (stesso
+// meccanismo con cui il Setter conta "Appuntamenti Fissati" — vedi computeFunnelValues).
+// CORREZIONE (segnalata dall'utente): prima era un campo inserito a mano, ma il numero
+// giusto è quello che risulta da "quando selezioni il ruolo venditore" nel CRM, non un
+// valore digitato separatamente — vedi isAutoAssignedField in renderFunnelHero.
 const FUNNEL_STEPS_VENDITORE = [
-  { key: 'appuntamentiFissati', label: 'Appuntamenti Assegnati', money: false, isAssignedField: true },
+  { key: 'appuntamentiFissati', label: 'Appuntamenti Assegnati', money: false, isAutoAssignedField: true },
   { key: 'presentati', label: 'Presentati', money: false },
   { key: 'chiusi', label: 'Chiusi', money: false }
 ];
@@ -669,14 +673,16 @@ function renderFunnelHero(role, timeframe, step, values, goalSet) {
   const isMoney = step.money;
   const fmtVal = (n) => isMoney ? `€${round2(n)}` : String(n);
 
-  if (step.isAssignedField) {
-    const assigned = goalSet.appuntamentiFissati || 0;
+  if (step.isAutoAssignedField) {
+    // Conteggio automatico dal CRM (righe con ruolo Venditore nel periodo) — non più un
+    // campo manuale: "current" arriva già da computeFunnelValues come le altre tappe.
+    const assigned = current;
     const presentedPct = assigned > 0 ? pct(values.presentati, assigned) : 0;
     const closedPct = assigned > 0 ? pct(values.chiusi, assigned) : 0;
     return `
       <div class="hero-main ${role}">
         <div class="hero-label">${escapeHtml(step.label)}</div>
-        <input type="number" min="0" class="hero-num-input" data-assigned-input="1" data-role="${role}" data-tf="${timeframe}" value="${assigned}">
+        <div class="hero-num" data-kpi-num="${assigned}" data-kpi-money="0" data-kpi-display="${assigned}">${assigned}</div>
         <div class="hero-of">${presentedPct}% presentati · ${closedPct}% chiusi (su assegnati)</div>
       </div>`;
   }
@@ -762,14 +768,6 @@ function wireDashboardTopSectionEvents() {
     });
     goalInput.addEventListener('blur', commit);
   }
-  appRoot.querySelectorAll('[data-assigned-input]').forEach(input => {
-    input.addEventListener('change', () => {
-      const role = input.dataset.role, tf = input.dataset.tf;
-      db.goals[role][tf].appuntamentiFissati = Math.max(0, parseFloat(input.value) || 0);
-      persist();
-      renderDashboard();
-    });
-  });
 }
 
 /* ---------- KPI commissioni complessive (dashboard) ---------- */
@@ -908,6 +906,74 @@ async function generateSessionReport() {
   showReportModal(text, copied);
 }
 
+/**
+ * Report copia-incolla della schermata Appuntamenti — una riga per appuntamento con le
+ * stesse voci della tabella (ruolo, nome, data/ora, presentato, chiuso) più cash
+ * collected, totale venduto e la commissione che spetta su quella riga, così può essere
+ * condiviso col direttore commerciale a fine mese per verificare chi si è presentato e
+ * quanto spetta. Rispetta il filtro Ruolo attualmente selezionato (Tutti/Setter/Venditore)
+ * e l'ordine mostrato a schermo (stesso array "rows" usato per renderAppuntamenti).
+ */
+function buildAppointmentsReportText(rows, filterLabel) {
+  const lines = [];
+  lines.push(`Report Appuntamenti — ${filterLabel}`);
+  lines.push(`Generato il ${fmtDate(new Date())}`);
+  lines.push('');
+
+  if (!rows.length) {
+    lines.push('Nessun appuntamento in questo elenco.');
+    return lines.join('\n');
+  }
+
+  const presentedLabel = (a) => {
+    if (a.role === 'setter') {
+      if (a.presentedStatus === 'presented') return 'Presentato';
+      if (a.presentedStatus === 'confirmed24h') return 'Confermato24h';
+      return 'No';
+    }
+    return a.presentedStatus === 'presented' ? 'Sì' : 'No';
+  };
+
+  let totalCash = 0, totalSold = 0, totalCommission = 0;
+
+  rows.forEach(a => {
+    const roleLabel = a.role === 'setter' ? 'Setter' : 'Venditore';
+    const cash = a.cashCollected || 0;
+    const sold = apptTotalSold(a);
+    const commission = sumEvents(commissionEventsForAppointment(a));
+    totalCash += cash;
+    totalSold += sold;
+    totalCommission += commission;
+
+    lines.push(`${a.clientName || '(senza nome)'} — ${roleLabel}`);
+    lines.push(`  Data/ora: ${a.scheduledAt ? fmtDateTime(a.scheduledAt) : '—'}`);
+    lines.push(`  Presentato: ${presentedLabel(a)} · Chiuso: ${a.closed ? 'Sì' : 'No'}`);
+    lines.push(`  Cash collected: €${round2(cash)} · Totale venduto: €${round2(sold)}`);
+    lines.push(`  Commissione: €${round2(commission)}`);
+    lines.push('');
+  });
+
+  lines.push('---');
+  lines.push(`Totale appuntamenti: ${rows.length}`);
+  lines.push(`Totale cash collected: €${round2(totalCash)}`);
+  lines.push(`Totale venduto: €${round2(totalSold)}`);
+  lines.push(`Totale commissioni: €${round2(totalCommission)}`);
+
+  return lines.join('\n');
+}
+
+async function generateAppointmentsReport() {
+  const filter = uiState.crmRoleFilter || 'all';
+  const rows = [...db.appointments]
+    .filter(a => filter === 'all' || a.role === filter)
+    .sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+  const filterLabel = filter === 'all' ? 'Tutti' : (filter === 'setter' ? 'Setter' : 'Venditore');
+
+  const text = buildAppointmentsReportText(rows, filterLabel);
+  const copied = await copyToClipboard(text);
+  showReportModal(text, copied, 'Report Appuntamenti');
+}
+
 /** Copia negli appunti con fallback per contesti (es. iframe sandbox) dove l'API moderna non è concessa. */
 async function copyToClipboard(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -937,9 +1003,9 @@ async function copyToClipboard(text) {
   }
 }
 
-function showReportModal(text, copied) {
+function showReportModal(text, copied, title) {
   openModal(`
-    <h3>Report sessione</h3>
+    <h3>${escapeHtml(title || 'Report sessione')}</h3>
     <p class="text-dim" style="font-size:0.85rem;">
       ${copied
         ? 'Copiato negli appunti — incollalo dove preferisci.'
@@ -1112,7 +1178,10 @@ function renderAppuntamenti() {
         <button class="pill ${filter === 'setter' ? 'active' : ''}" data-crm-filter="setter">Setter</button>
         <button class="pill ${filter === 'venditore' ? 'active' : ''}" data-crm-filter="venditore">Venditore</button>
       </div>
-      <button class="btn-primary" id="btnNewAppt">+ Nuovo Appuntamento</button>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-ghost" id="btnApptReport">Report</button>
+        <button class="btn-primary" id="btnNewAppt">+ Nuovo Appuntamento</button>
+      </div>
     </section>
     <section class="card crm-table-wrap">
       ${rows.length ? `
@@ -1187,7 +1256,16 @@ function wireAppuntamentiEvents() {
   appRoot.querySelectorAll('[data-crm-filter]').forEach(btn => {
     btn.addEventListener('click', () => { uiState.crmRoleFilter = btn.dataset.crmFilter; renderAppuntamenti(); });
   });
-  document.getElementById('btnNewAppt').addEventListener('click', addBlankAppointmentRow);
+  document.getElementById('btnNewAppt').addEventListener('click', () => {
+    // Se il filtro Ruolo attivo è Setter o Venditore, la nuova riga nasce con quel
+    // ruolo — altrimenti (filtro "Tutti") resta il default Setter. Prima creava sempre
+    // una riga Setter: con il filtro su "Venditore" la riga nasceva subito nascosta
+    // dal filtro stesso, sembrando che il pulsante non facesse nulla.
+    const filter = uiState.crmRoleFilter;
+    const role = (filter === 'setter' || filter === 'venditore') ? filter : 'setter';
+    addBlankAppointmentRow(role);
+  });
+  document.getElementById('btnApptReport').addEventListener('click', generateAppointmentsReport);
 
   appRoot.querySelectorAll('[data-set-role]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1281,13 +1359,14 @@ function wireAppuntamentiEvents() {
 }
 
 /**
- * "+ Nuovo Appuntamento": niente modal — crea subito una riga vuota (default Setter,
- * data/ora = adesso) e la mette in cima alla tabella, editabile inline esattamente come
- * le righe esistenti (stesso pattern di autosave su ogni campo). L'utente compila
- * Nome/Ruolo/Data direttamente nella riga; il focus va subito sul campo Nome.
+ * "+ Nuovo Appuntamento": niente modal — crea subito una riga vuota (ruolo = quello del
+ * filtro attivo, o Setter se il filtro è "Tutti"; data/ora = adesso) e la mette in cima
+ * alla tabella, editabile inline esattamente come le righe esistenti (stesso pattern di
+ * autosave su ogni campo). L'utente compila Nome/Ruolo/Data direttamente nella riga; il
+ * focus va subito sul campo Nome.
  */
-function addBlankAppointmentRow() {
-  const apt = newAppointment('setter');
+function addBlankAppointmentRow(role) {
+  const apt = newAppointment(role || 'setter');
   db.appointments.unshift(apt);
   persist();
   renderAppuntamenti();

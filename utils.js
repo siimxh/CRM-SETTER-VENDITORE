@@ -222,16 +222,17 @@ function inRange(dateVal, range) {
 /**
  * Data di incasso "effettiva" del cashCollected iniziale di un appuntamento.
  *
- * SCELTA DI INTERPRETAZIONE (ambiguità segnalata nel brief): il modello dati non
- * ha un campo dedicato all'istante di incasso dell'acconto iniziale. Usiamo
- * appointment.closedAt se presente (impostato quando l'utente marca closed=true,
- * vedi app.js:setAppointmentClosed), altrimenti appointment.scheduledAt come
- * fallback (per dati importati/legacy senza closedAt). Questo è documentato qui
- * perché determina in quale mese/settimana/giorno cade la commissione sul cash
- * collected iniziale.
+ * CORREZIONE (segnalata dall'utente): la commissione sul cash collected iniziale va
+ * segnata nel calendario alla data dell'appuntamento presentato/incassato, NON al
+ * giorno in cui l'utente marca la riga come "chiuso" nel CRM (closedAt) — quel giorno
+ * può essere molto dopo la data reale dell'appuntamento (es. appuntamento del 6, marcato
+ * chiuso il 10: la commissione va sul 6, non sul 10). Usiamo quindi presentedAt se
+ * presente (il giorno in cui il cliente si è presentato/l'incasso è avvenuto),
+ * altrimenti scheduledAt come fallback (appuntamenti senza presentedAt, es. legacy o
+ * chiusi senza passare per "presentato").
  */
 function appointmentCashDate(apt) {
-  return apt.closedAt || apt.scheduledAt;
+  return apt.presentedAt || apt.scheduledAt;
 }
 
 /**
