@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Chiamate Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📞</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Tutti gli 8 font del builder (Impostazioni) caricati fin da subito, così lo
+     switch tra stili è istantaneo e non serve un fetch a runtime. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600;700&family=Bebas+Neue&family=Playfair+Display:wght@600;700&family=Space+Mono:wght@400;700&family=Orbitron:wght@600;700&family=VT323&family=Unbounded:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header id="topbar">
+    <div class="brand">Chiamate Tracker</div>
+    <nav id="mainNav">
+      <button class="navlink" data-route="dashboard">Dashboard</button>
+      <button class="navlink" data-route="appuntamenti">Appuntamenti</button>
+      <button class="navlink" data-route="commissioni">Commissioni</button>
+      <button class="navlink" data-route="sessioni">Sessioni</button>
+    </nav>
+    <div class="topbar-actions">
+      <span id="syncStatus" class="sync-status" style="display:none;"></span>
+      <button id="btnBuilder" class="btn-ghost" title="Personalizza aspetto e opzioni">🎨</button>
+      <button id="btnSettings" class="btn-ghost" title="Sincronizzazione Firebase (facoltativa)">⚙</button>
+      <button id="btnExport" class="btn-ghost" title="Scarica un backup dei tuoi dati">Esporta</button>
+      <label class="btn-ghost" title="Ripristina un backup" id="importLabel">
+        Importa
+        <input type="file" id="importFile" accept="application/json" hidden>
+      </label>
+      <button id="btnNuovaSessione" class="btn-primary">+ Nuova sessione</button>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+  <div id="modalRoot"></div>
+
+  <script src="storage.js"></script>
+  <script src="utils.js"></script>
+  <script src="firebase-sync.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
