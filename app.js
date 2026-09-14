@@ -1616,14 +1616,15 @@ function renderSessioneAttiva() {
   const buttonsHtml = outcomes.map(o => `
     <button class="outcome-btn" data-outcome-id="${o.id}">
       ${escapeHtml(o.label)}
-      ${o.isNoAnswer ? '<span class="outcome-btn-sub">attiva 2ª chiamata</span>' : ''}
+      ${o.isNoAnswer && MAX_CALL_ATTEMPTS > 1 ? `<span class="outcome-btn-sub">attiva richiamo (max ${MAX_CALL_ATTEMPTS} tentativi)</span>` : ''}
     </button>
   `).join('');
 
-  const secondCallBannerHtml = s.secondCallPending ? `
+  const attemptNum = (s.callAttemptsOnLead || 0) + 1;
+  const secondCallBannerHtml = s.retryCallsPending ? `
     <div class="second-call-banner">
-      <span class="blink-dot"></span>Seconda chiamata — stesso lead
-      <span class="scb-hint">Segna l'esito di questo secondo tentativo, oppure premi Skip per annullare e passare al prossimo lead.</span>
+      <span class="blink-dot"></span>Richiamo ${attemptNum}ª chiamata — stesso lead
+      <span class="scb-hint">Segna l'esito di questo tentativo, oppure premi Skip per annullare e passare al prossimo lead.</span>
     </div>
   ` : '';
 
@@ -1683,15 +1684,22 @@ function updateSessionTimer() {
 // "conferma appuntamento" (altro isConversion:true) o un esito custom non lo attivano mai.
 const APPOINTMENT_SET_OUTCOME_LABEL = 'Appuntamento Fissato';
 
+// Numero massimo di tentativi TOTALI sullo stesso lead quando l'esito è "nessuna risposta"
+// (es. squilli a vuoto). 1 = nessun richiamo (si passa subito al lead successivo dopo il
+// primo "non risponde"), 2 = un richiamo (2 chiamate totali, comportamento storico), 3 = due
+// richiami (3 chiamate totali — regola indicata il 14/09/2026). Se le indicazioni cambiano
+// di nuovo, basta aggiornare questo numero: tutto il resto del flusso si adatta da solo.
+const MAX_CALL_ATTEMPTS = 3;
+
 function logCallAction(outcomeId) {
   const s = db.activeSession;
   const pipeline = db.pipelines.find(p => p.id === s.pipelineId);
   const outcome = pipeline.outcomes.find(o => o.id === outcomeId);
   if (!outcome) return;
 
-  // Se eravamo in attesa della "seconda chiamata", questo click chiude quel giro:
-  // è una seconda telefonata allo STESSO lead (non un lead nuovo), qualunque sia l'esito.
-  const isSecondAttempt = !!s.secondCallPending;
+  // Se eravamo in attesa di un richiamo, questo click è un ulteriore tentativo sullo
+  // STESSO lead (non un lead nuovo), qualunque sia l'esito di questa chiamata.
+  const isRetryAttempt = (s.retryCallsPending || 0) > 0;
 
   s.calls.push({
     id: uid('call'),
@@ -1700,12 +1708,19 @@ function logCallAction(outcomeId) {
     outcomeLabel: outcome.label,
     isConversion: !!outcome.isConversion,
     isNoAnswer: !!outcome.isNoAnswer,
-    isSecondAttempt
+    isSecondAttempt: isRetryAttempt
   });
 
-  // Un esito "nessuna risposta" apre la finestra per la seconda chiamata sullo stesso lead,
-  // ma solo se non ci troviamo già dentro quella finestra (evita di incatenare una terza chiamata).
-  s.secondCallPending = !isSecondAttempt && !!outcome.isNoAnswer;
+  // Quanti tentativi abbiamo già fatto su questo lead in questo giro (1 = solo la chiamata
+  // appena fatta, oppure quelli precedenti +1 se eravamo già in un richiamo).
+  const attemptsSoFar = isRetryAttempt ? (s.callAttemptsOnLead || 1) + 1 : 1;
+  s.callAttemptsOnLead = attemptsSoFar;
+
+  // Un esito "nessuna risposta" apre la finestra per un ulteriore richiamo sullo stesso
+  // lead, finché non si raggiunge MAX_CALL_ATTEMPTS tentativi totali su quel lead.
+  const canRetry = !!outcome.isNoAnswer && attemptsSoFar < MAX_CALL_ATTEMPTS;
+  s.retryCallsPending = canRetry;
+  if (!canRetry) s.callAttemptsOnLead = 0;
 
   // La chiamata è già registrata a prescindere da quel che succede dopo (persist() qui sotto):
   // il popup "Appuntamento Fissato" (se scatta) è un'aggiunta al CRM, non deve mai poter
@@ -1768,9 +1783,10 @@ function openAppointmentSetModal() {
 
 function skipLeadAction() {
   const s = db.activeSession;
-  // Se era aperta la finestra "seconda chiamata", Skip la annulla (es. non hai richiamato
+  // Se era aperta la finestra "richiamo", Skip la annulla (es. non hai richiamato
   // davvero, o è stato un errore) e si passa al prossimo lead senza contare nulla in più.
-  s.secondCallPending = false;
+  s.retryCallsPending = false;
+  s.callAttemptsOnLead = 0;
   s.skips = (s.skips || 0) + 1;
   persist();
   renderSessioneAttiva();
@@ -1999,7 +2015,8 @@ function startSessionAction(pipelineId) {
     endedAt: null,
     calls: [],
     skips: 0,
-    secondCallPending: false
+    retryCallsPending: false,
+    callAttemptsOnLead: 0
   };
   persist();
   closeModal();
