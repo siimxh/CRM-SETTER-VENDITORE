@@ -942,6 +942,18 @@ body.in-session #topbar { display: none; }
 .kpi-card.accented { border-top-color: var(--accent); position: relative; }
 
 /* ============================================================================
+ * Grafici a linea "Andamento generale" (dashboard) — SVG puro, nessuna libreria esterna
+ * ==========================================================================*/
+.chart-card { display: flex; flex-direction: column; gap: 10px; }
+.chart-card-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.chart-card-header h3 { margin: 0; }
+.line-chart-wrap { display: flex; flex-direction: column; gap: 6px; }
+.line-chart-svg { width: 100%; height: 160px; display: block; }
+.line-chart-footer { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.74rem; }
+.line-chart-last { font-weight: 700; }
+.chart-empty { padding: 40px 0; text-align: center; font-size: 0.86rem; }
+
+/* ============================================================================
  * Appuntamenti (mini-CRM)
  * ==========================================================================*/
 
@@ -1002,6 +1014,177 @@ body.in-session #topbar { display: none; }
 .crm-phone-input { font-family: var(--mono); font-size: 0.74rem; color: var(--text-dim); }
 .crm-datetime-input { font-family: var(--mono); font-size: 0.76rem; min-width: 176px; }
 
+/* Telefono + tasto copia (usato nella riga Appuntamenti Venditore) */
+.crm-phone-row { display: flex; align-items: center; gap: 4px; }
+.crm-phone-row .crm-phone-input { flex: 1; min-width: 0; }
+.crm-copy-phone-btn {
+  background: var(--bg-elev2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-dim); cursor: pointer; padding: 5px 7px; font-size: 0.78rem; line-height: 1; flex-shrink: 0;
+}
+.crm-copy-phone-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ============================================================================
+ * Venditore — stato trattativa (dealStage), note, follow-up, registrazioni call
+ * ==========================================================================*/
+
+/* Schema colori esplicito richiesto dall'utente per ogni stato trattativa. Definiti
+   come custom property per stato così sia il <select> sia eventuali badge/chip futuri
+   possono riusarli senza duplicare gli hex. */
+:root {
+  --stage-no_show: #b8860b;            /* senape */
+  --stage-no_show-bg: rgba(184,134,11,0.16);
+  --stage-annullato: #6b6d63;          /* grigio/nero neutro */
+  --stage-annullato-bg: rgba(107,109,99,0.16);
+  --stage-trattativa: #1985ab;         /* azzurro */
+  --stage-trattativa-bg: rgba(25,133,171,0.16);
+  --stage-contratto_firmato: #4c8a00;  /* verde chiaro */
+  --stage-contratto_firmato-bg: rgba(76,138,0,0.16);
+  --stage-chiuso: #1f5c1f;             /* verde scuro */
+  --stage-chiuso-bg: rgba(31,92,31,0.18);
+  --stage-perso: #c23b3b;              /* rosso */
+  --stage-perso-bg: rgba(194,59,59,0.16);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --stage-no_show: #e0b23d;
+    --stage-annullato: #9a9d9f;
+    --stage-trattativa: #7fd9ff;
+    --stage-contratto_firmato: #9be564;
+    --stage-chiuso: #4ade80;
+    --stage-perso: #ff5c5c;
+  }
+}
+:root[data-theme="dark"] {
+  --stage-no_show: #e0b23d;
+  --stage-annullato: #9a9d9f;
+  --stage-trattativa: #7fd9ff;
+  --stage-contratto_firmato: #9be564;
+  --stage-chiuso: #4ade80;
+  --stage-perso: #ff5c5c;
+}
+
+.deal-stage-select {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  min-width: 150px;
+  background: var(--bg-elev2);
+  color: var(--text-dim);
+}
+.deal-stage-select[data-stage="no_show"] { color: var(--stage-no_show); background: var(--stage-no_show-bg); border-color: var(--stage-no_show); }
+.deal-stage-select[data-stage="annullato"] { color: var(--stage-annullato); background: var(--stage-annullato-bg); border-color: var(--stage-annullato); }
+.deal-stage-select[data-stage="trattativa"] { color: var(--stage-trattativa); background: var(--stage-trattativa-bg); border-color: var(--stage-trattativa); }
+.deal-stage-select[data-stage="contratto_firmato"] { color: var(--stage-contratto_firmato); background: var(--stage-contratto_firmato-bg); border-color: var(--stage-contratto_firmato); }
+.deal-stage-select[data-stage="chiuso"] { color: var(--stage-chiuso); background: var(--stage-chiuso-bg); border-color: var(--stage-chiuso); }
+.deal-stage-select[data-stage="perso"] { color: var(--stage-perso); background: var(--stage-perso-bg); border-color: var(--stage-perso); }
+
+.vnd-actions-cell { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.vnd-note-btn, .vnd-followup-btn {
+  background: var(--bg-elev2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-dim); cursor: pointer; padding: 6px 10px; font-family: var(--mono); font-size: 0.68rem;
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap;
+}
+.vnd-note-btn:hover, .vnd-followup-btn:hover { border-color: var(--accent); color: var(--accent); }
+.vnd-note-btn.has-notes { border-color: var(--venditore-color); color: var(--venditore-color); }
+.vnd-followup-btn.has-date { border-color: var(--warning); color: var(--warning); }
+
+/* Modale Note — ispirato allo screenshot fornito: lista scrollabile di note passate,
+   più recenti in cima, ognuna con autore e data; textarea + tasto per aggiungerne una. */
+.notes-list { display: flex; flex-direction: column; gap: 10px; max-height: 340px; overflow-y: auto; margin: 12px 0; }
+.note-card { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px 14px; }
+.note-card-text { font-size: 0.86rem; white-space: pre-wrap; word-break: break-word; }
+.note-card-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--text-dim); margin-top: 8px; }
+.note-add-row { display: flex; flex-direction: column; gap: 8px; }
+.note-add-row textarea {
+  width: 100%; min-height: 70px; background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text); font-size: 0.86rem; resize: vertical;
+  font-family: 'Archivo', sans-serif;
+}
+
+/* Widget "Registrazione Call" (link Drive/Fathom/ecc.) — Venditore, ancorato fixed
+   in fondo a destra sopra il resto del contenuto (non più una card a piena larghezza). */
+.call-rec-widget {
+  position: fixed; right: 18px; bottom: 18px; z-index: 40;
+  width: 320px; max-width: calc(100vw - 36px);
+  display: flex; flex-direction: column; align-items: flex-end;
+}
+.call-rec-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 14px; color: var(--text);
+  font-family: 'Archivo', sans-serif; font-size: 0.82rem; font-weight: 600;
+  cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+}
+.call-rec-toggle:hover { border-color: var(--accent); }
+.call-rec-count {
+  background: var(--accent); color: var(--bg); border-radius: 999px;
+  padding: 1px 8px; font-size: 0.74rem; font-weight: 700;
+}
+.call-rec-widget.is-open .call-rec-toggle { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.call-rec-panel {
+  width: 100%; background: var(--bg-elev); border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm); padding: 12px 14px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.35); max-height: 60vh; overflow-y: auto;
+}
+.call-rec-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.call-rec-row { display: flex; align-items: center; gap: 8px; background: var(--bg-elev2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+.call-rec-row a { color: var(--accent); text-decoration: none; font-size: 0.84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.call-rec-row a:hover { text-decoration: underline; }
+.call-rec-add-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.call-rec-add-row input[type="text"] {
+  flex: 1; min-width: 120px; background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text); font-size: 0.84rem;
+}
+@media (max-width: 640px) {
+  .call-rec-widget { right: 12px; bottom: 12px; width: calc(100vw - 24px); }
+}
+
+/* Sezione Statistiche Venditore */
+.vnd-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); }
+@media (max-width: 760px) { .vnd-stats-grid { grid-template-columns: repeat(2, 1fr); } }
+.vnd-timeframe-tabs { display: flex; gap: 8px; margin-bottom: 4px; }
+
+/* Etichette di gruppo nella nav (Setting / Venditore) */
+.nav-group-label {
+  font-family: var(--mono); font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-dim); align-self: center; margin-left: 4px;
+  padding-right: 2px; white-space: nowrap;
+}
+
+/* Sotto-tab dentro le schermate "Setting" e "Venditore" (Appuntamenti/Sessioni,
+   Appuntamenti/Statistiche) — un solo bottone di nav in alto, la scelta si fa qui. */
+.sub-tabs-bar { padding: 10px 14px; }
+.sub-tabs { display: flex; gap: 8px; }
+
+/* ============================================================================
+ * Calendario Appuntamenti (modal, Setter/Venditore) — pillole colorate per giorno
+ * ==========================================================================*/
+.cal-appt-pills { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.cal-appt-pill {
+  font-size: 0.62rem; font-weight: 700; padding: 2px 5px; border-radius: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid transparent;
+}
+.cal-appt-more { font-size: 0.6rem; color: var(--text-dim); font-family: var(--mono); }
+.cal-appt-pill.cal-appt-neutral { background: var(--bg-elev2); color: var(--text-dim); border-color: var(--border); }
+.cal-appt-pill.cal-appt-confirmed { background: rgba(25,133,171,0.16); color: #1985ab; border-color: #1985ab; }
+.cal-appt-pill.cal-appt-presented { background: var(--tag-conv-bg); color: var(--success); border-color: var(--success); }
+.cal-appt-pill.cal-appt-noshow { background: rgba(184,134,11,0.16); color: var(--stage-no_show, #b8860b); border-color: var(--stage-no_show, #b8860b); }
+
+.cal-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cal-legend-item {
+  font-size: 0.66rem; font-weight: 700; padding: 3px 8px; border-radius: 3px; border: 1px solid transparent;
+}
+.cal-legend-item.cal-appt-neutral { background: var(--bg-elev2); color: var(--text-dim); border-color: var(--border); }
+.cal-legend-item.cal-appt-confirmed { background: rgba(25,133,171,0.16); color: #1985ab; border-color: #1985ab; }
+.cal-legend-item.cal-appt-presented { background: var(--tag-conv-bg); color: var(--success); border-color: var(--success); }
+.cal-legend-item.cal-appt-noshow { background: rgba(184,134,11,0.16); color: var(--stage-no_show, #b8860b); border-color: var(--stage-no_show, #b8860b); }
+
 .installments-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 .installment-row { display: grid; grid-template-columns: 1fr 100px 130px 90px 130px auto; gap: 8px; align-items: center; font-size: 0.82rem; }
 @media (max-width: 620px) { .installment-row { grid-template-columns: 1fr; } }
@@ -1010,6 +1193,16 @@ body.in-session #topbar { display: none; }
   padding: 7px 8px; color: var(--text); font-size: 0.82rem; width: 100%;
 }
 .installment-total-row { display: flex; justify-content: space-between; font-family: var(--mono); font-weight: 700; padding-top: 8px; border-top: 1px solid var(--border); margin-top: 4px; }
+
+/* Rata sintetica "Acconto" (dal cash collected) — vedi getEffectiveInstallments in app.js */
+.installment-row-deposit {
+  background: var(--bg-elev2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.installment-deposit-label { font-weight: 700; }
+.installment-deposit-amount { font-family: var(--mono); font-weight: 700; color: var(--success); }
 
 /* ============================================================================
  * Calendario commissioni

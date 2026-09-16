@@ -238,13 +238,22 @@ function appointmentCashDate(apt) {
 /**
  * Elenco di "eventi di commissione" generati da un singolo appuntamento, ciascuno
  * con: data, importo, fonte ('showup' | 'setting' | 'vendita'), e riferimento al
- * cliente. Un evento per il cash collected iniziale (se chiuso), uno per ogni
- * rata pagata, più uno "showup" da 40€ per i setter quando presentedStatus === 'presented'.
+ * cliente. Un evento per ogni rata pagata (l'"Acconto" sintetico dal cash collected
+ * incluso — vedi getEffectiveInstallments in app.js), più uno "showup" da 40€ per i
+ * setter quando presentedStatus === 'presented'.
  *
  * Regole di business (vedi brief):
- * - setter: 3% di ogni importo incassato (cash iniziale + rate paid), + 40€ fissi
+ * - setter: 3% di ogni importo incassato (acconto + rate paid), + 40€ fissi
  *   al momento del "presentato".
- * - venditore: 10% di ogni importo incassato (cash iniziale + rate paid).
+ * - venditore: 10% di ogni importo incassato (acconto + rate paid).
+ *
+ * CORREZIONE (segnalata dall'utente): prima l'acconto (cashCollected) generava un
+ * evento di commissione indipendente dalle rate ("_cash0") — se l'utente inseriva poi
+ * il totale pacchetto reale (es. 5100€) come rate, il cash collected (200€) veniva
+ * contato due volte nelle commissioni. Ora l'acconto è semplicemente la prima "rata"
+ * (vedi getEffectiveInstallments), quindi qui basta scorrere le rate effettive: niente
+ * più doppio conteggio, e resta comunque richiesto closed=true perché un appuntamento
+ * generi commissioni sull'incassato (coerente col comportamento precedente).
  */
 function commissionEventsForAppointment(apt) {
   const events = [];
@@ -264,31 +273,21 @@ function commissionEventsForAppointment(apt) {
     });
   }
 
-  if (apt.closed && apt.cashCollected > 0) {
-    events.push({
-      id: apt.id + '_cash0',
-      appointmentId: apt.id,
-      clientName: apt.clientName,
-      role: apt.role,
-      date: appointmentCashDate(apt),
-      amount: round2(apt.cashCollected * rate),
-      source
+  if (apt.closed) {
+    getEffectiveInstallments(apt).forEach(inst => {
+      if (inst.paid && inst.amount > 0) {
+        events.push({
+          id: apt.id + '_' + inst.id,
+          appointmentId: apt.id,
+          clientName: apt.clientName,
+          role: apt.role,
+          date: inst.paidDate || inst.dueDate,
+          amount: round2(inst.amount * rate),
+          source
+        });
+      }
     });
   }
-
-  (apt.installments || []).forEach(inst => {
-    if (inst.paid && inst.amount > 0) {
-      events.push({
-        id: apt.id + '_' + inst.id,
-        appointmentId: apt.id,
-        clientName: apt.clientName,
-        role: apt.role,
-        date: inst.paidDate || inst.dueDate,
-        amount: round2(inst.amount * rate),
-        source
-      });
-    }
-  });
 
   return events;
 }
@@ -315,11 +314,29 @@ function sumEvents(events) { return round2(events.reduce((s, e) => s + e.amount,
 /**
  * Calcola i valori attuali del funnel per un ruolo in un range.
  * Setter: appuntamentiFissati, presentati, chiusi, commissioniShowUp, commissioniChiusure, commissioniTot.
- * Venditore: assegnati (dato manuale, non calcolato), presentati, chiusi (+ commissioni chiusure).
+ * Venditore: assegnati (auto-calcolato dal CRM), presentati, chiusi (+ commissioni chiusure).
+ *
+ * CORREZIONE (segnalata dall'utente): "Appuntamenti Fissati/Assegnati" per un timeframe
+ * (es. Giornaliero) deve contare quanti appuntamenti sono stati REGISTRATI nel sistema
+ * in quel periodo (createdAt — l'attività di fissaggio fatta oggi/questa settimana), NON
+ * quanti appuntamenti sono IN AGENDA per quel periodo (scheduledAt). Prima, fissando oggi
+ * un appuntamento per il 16 mentre l'obiettivo giornaliero guardava "oggi 16", il tool
+ * mostrava 0 fissati oggi ma 1 (quello fissato ieri, per oggi) — comportamento invertito.
+ * "Presentati" e "Chiusi" invece restano filtrati su scheduledAt: l'esito di un
+ * appuntamento appartiene al giorno in cui si è effettivamente svolto, non a quando è
+ * stato creato nel sistema — quindi qui servono DUE sottoinsiemi distinti.
  */
 function computeFunnelValues(db, role, range) {
-  const appts = (db.appointments || []).filter(a => a.role === role && inRange(a.scheduledAt, range));
-  const presentati = appts.filter(a => a.presentedStatus === 'presented').length;
+  const roleAppts = (db.appointments || []).filter(a => a.role === role);
+  const fissatiAppts = roleAppts.filter(a => inRange(a.createdAt, range));
+  const appts = roleAppts.filter(a => inRange(a.scheduledAt, range));
+  // "Presentati": per il Setter segue presentedStatus (invariato); per il Venditore
+  // segue il nuovo dealStage — presentato = qualunque stato tranne No Show (vedi
+  // DEAL_STAGES.isPresented in app.js), dato che No Show è l'unico stato che significa
+  // "il lead non si è fatto vedere".
+  const presentati = role === 'venditore'
+    ? appts.filter(a => a.dealStage && dealStageDef(a.dealStage) && dealStageDef(a.dealStage).isPresented).length
+    : appts.filter(a => a.presentedStatus === 'presented').length;
   const chiusi = appts.filter(a => a.closed).length;
 
   const events = commissionEventsInRange(db, range, role);
@@ -327,7 +344,7 @@ function computeFunnelValues(db, role, range) {
   const chiusureEvents = events.filter(e => e.source === 'setting' || e.source === 'vendita');
 
   return {
-    appuntamentiFissati: appts.length,
+    appuntamentiFissati: fissatiAppts.length,
     presentati,
     chiusi,
     commissioniShowUp: sumEvents(showUpEvents),
@@ -385,6 +402,54 @@ function computeCommissionSummary(db, range) {
     setting: bySource.setting,
     vendita: bySource.vendita,
     events
+  };
+}
+
+/**
+ * Statistiche aggregate Venditore per un range (o "all time" se range è null) — analoghe
+ * a quelle già mostrate per le sessioni Setter (conversion rate, ecc.), richieste
+ * esplicitamente dall'utente per capire il proprio rendimento sui vari timeframe.
+ *
+ * - assegnati: appuntamenti Venditore registrati nel periodo (createdAt, stesso criterio
+ *   di "Appuntamenti Assegnati" nel funnel — vedi computeFunnelValues).
+ * - presentati/chiusi/persi/noShow: filtrati su scheduledAt (quando si è svolto
+ *   l'appuntamento), stesso criterio del funnel, ma qui contati sull'intero dataset
+ *   Venditore (non solo sul periodo di "assegnazione") così lo show rate/conversion
+ *   rate riflettono gli ESITI avvenuti nel periodo scelto, a prescindere da quando il
+ *   lead era stato assegnato.
+ * - showRate: presentati / (presentati + noShow) — quanti dei lead che dovevano
+ *   presentarsi si sono davvero presentati.
+ * - conversionRate: chiusi (contratto_firmato + chiuso) / presentati — quanti dei
+ *   presentati si chiudono.
+ * - scontrinoMedio: totale venduto (su appuntamenti chiusi) / numero di chiusi.
+ */
+function computeVenditoreStats(db, range) {
+  const all = (db.appointments || []).filter(a => a.role === 'venditore');
+  const inR = (a, field) => !range || inRange(a[field], range);
+
+  const assegnati = all.filter(a => inR(a, 'createdAt')).length;
+  const scoped = all.filter(a => inR(a, 'scheduledAt'));
+
+  const noShow = scoped.filter(a => a.dealStage === 'no_show').length;
+  const persi = scoped.filter(a => a.dealStage === 'perso').length;
+  const annullati = scoped.filter(a => a.dealStage === 'annullato').length;
+  const presentati = scoped.filter(a => a.dealStage && dealStageDef(a.dealStage) && dealStageDef(a.dealStage).isPresented).length;
+  const chiusiAppts = scoped.filter(a => a.closed);
+  const chiusi = chiusiAppts.length;
+
+  const showRateBase = presentati + noShow;
+  const showRate = showRateBase > 0 ? pct(presentati, showRateBase) : 0;
+  const conversionRate = presentati > 0 ? pct(chiusi, presentati) : 0;
+
+  const totalVenduto = chiusiAppts.reduce((s, a) => s + apptTotalSold(a), 0);
+  const scontrinoMedio = chiusi > 0 ? round2(totalVenduto / chiusi) : 0;
+
+  const commEvents = range ? commissionEventsInRange(db, range, 'venditore') : allCommissionEvents(db).filter(e => e.role === 'venditore');
+  const commissioniTot = sumEvents(commEvents);
+
+  return {
+    assegnati, presentati, chiusi, persi, noShow, annullati,
+    showRate, conversionRate, totalVenduto, scontrinoMedio, commissioniTot
   };
 }
 

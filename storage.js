@@ -125,8 +125,35 @@ function defaultData() {
     // in app.js (newAppointment) e le regole di calcolo commissioni in utils.js.
     appointments: [],
     goals: defaultGoals(),
-    settings: defaultSettings()
+    settings: defaultSettings(),
+
+    // Registro link registrazioni call (solo sezione Venditore) — vedi renderCallRecordings
+    // in app.js. Elenco semplice di { id, label, url, createdAt }, nessun'altra struttura.
+    callRecordings: []
   };
+}
+
+/**
+ * Riempie i campi nuovi (dealStage/notes/nextFollowUpDate, split Setter/Venditore) su
+ * un appuntamento salvato con la vecchia struttura, senza perdere dati. Per righe
+ * Venditore preesistenti, deriva un dealStage ragionevole dal vecchio
+ * presentedStatus/closed così lo storico resta coerente col nuovo funnel invece di
+ * apparire "vuoto": chiuso -> "chiuso", presentato ma non chiuso -> "trattativa",
+ * mai presentato -> nessuno stato (l'utente lo classificherà quando riprende in mano
+ * la riga — non possiamo distinguere in automatico un vecchio "no" da un no-show reale).
+ */
+function migrateAppointment(a) {
+  const out = Object.assign({
+    dealStage: null,
+    notes: [],
+    nextFollowUpDate: null
+  }, a);
+  if (out.role === 'venditore' && !out.dealStage) {
+    if (out.closed) out.dealStage = 'chiuso';
+    else if (out.presentedStatus === 'presented') out.dealStage = 'trattativa';
+  }
+  if (!Array.isArray(out.notes)) out.notes = [];
+  return out;
 }
 
 /**
@@ -151,6 +178,9 @@ function mergeWithDefaults(parsed) {
   out.settings = Object.assign({}, base.settings, parsed.settings);
   out.settings.colors = Object.assign({}, base.settings.colors, (parsed.settings || {}).colors);
   out.settings.toggles = Object.assign({}, base.settings.toggles, (parsed.settings || {}).toggles);
+
+  out.appointments = (parsed.appointments || []).map(migrateAppointment);
+  out.callRecordings = Array.isArray(parsed.callRecordings) ? parsed.callRecordings : [];
 
   return out;
 }

@@ -7,10 +7,20 @@ let uiState = {
   customTo: null,
   pipelineFilter: 'all',
   sessioniPipelineFilter: 'all',
-  crmRoleFilter: 'all',
+  crmSetterFilter: 'all',      // 'all' | 'no_show' — tabella Appuntamenti Setter
+  crmVenditoreFilter: 'all',   // 'all' | 'trattativa' | 'no_show' | 'perso' — tabella Appuntamenti Venditore
+  vndStatsTimeframe: 'mese_corrente', // timeframe attivo per la pagina Statistiche Venditore
+  vndStatsCustomFrom: null,
+  vndStatsCustomTo: null,
   calMonthOffset: 0,           // scostamento in mesi dal mese corrente, per la navigazione del calendario
   editingGoal: null,           // { role, timeframe, step } quando un target obiettivo è in modifica inline
-  goalsTimeframe: 'month'      // timeframe attivo (day|week|month) per le card Obiettivi (stile Hero + Sparkline)
+  goalsTimeframe: 'month',     // timeframe attivo (day|week|month) per le card Obiettivi (stile Hero + Sparkline)
+  settingTab: 'appuntamenti',  // sotto-tab attiva dentro la sezione Setting: 'appuntamenti' | 'sessioni'
+  venditoreTab: 'appuntamenti',// sotto-tab attiva dentro la sezione Venditore: 'appuntamenti' | 'statistiche'
+  andamentoTimeframe: 'mese_corrente', // timeframe dei grafici a linea "Andamento generale" in dashboard
+  andamentoCustomFrom: null,
+  andamentoCustomTo: null,
+  andamentoCommRole: 'all'     // 'all' | 'setter' | 'venditore' — filtro ruolo solo per il grafico Commissioni
 };
 let sessionTimerInterval = null;
 
@@ -375,6 +385,13 @@ function isCashDay(dayTotal) {
 
 /* ---------- Router ---------- */
 
+// Route "macro" che raggruppano più sotto-schermate sotto un solo bottone di nav
+// (richiesto esplicitamente dall'utente: un solo "Setting" e un solo "Venditore" in nav,
+// con la scelta Appuntamenti/Sessioni (Setting) o Appuntamenti/Statistiche (Venditore)
+// fatta DENTRO la schermata tramite sotto-tab, non con più voci di nav separate).
+const SETTING_SUBROUTES = { appuntamenti: 'setting-appuntamenti', sessioni: 'sessioni' };
+const VENDITORE_SUBROUTES = { appuntamenti: 'venditore-appuntamenti', statistiche: 'venditore-statistiche' };
+
 function renderRoute() {
   if (db.activeSession) {
     renderSessioneAttiva();
@@ -387,139 +404,109 @@ function renderRoute() {
   const parts = hash.replace('#/', '').split('/');
   const route = parts[0] || 'dashboard';
 
-  document.querySelectorAll('.navlink').forEach(l => l.classList.toggle('active', l.dataset.route === route));
+  // Le due macro-voci di nav "Setting"/"Venditore" sono attive quando la route corrente
+  // è una qualunque delle loro sotto-schermate, non solo quando l'hash è esattamente
+  // 'setting' o 'venditore' — altrimenti il bottone si spegnerebbe entrando in una tab.
+  const isSettingRoute = route === 'setting' || Object.values(SETTING_SUBROUTES).includes(route);
+  const isVenditoreRoute = route === 'venditore' || Object.values(VENDITORE_SUBROUTES).includes(route);
+  document.querySelectorAll('.navlink').forEach(l => {
+    const r = l.dataset.route;
+    const active = (r === 'setting' && isSettingRoute) || (r === 'venditore' && isVenditoreRoute) || r === route;
+    l.classList.toggle('active', active);
+  });
 
   applyTheme(db.settings);
 
-  if (route === 'sessioni' && parts[1]) renderSessioneDetail(parts[1]);
-  else if (route === 'sessioni') renderSessioniList();
-  else if (route === 'appuntamenti') renderAppuntamenti();
-  else if (route === 'commissioni') renderCommissioni();
+  if (route === 'sessioni' && parts[1]) { uiState.settingTab = 'sessioni'; renderSessioneDetail(parts[1]); }
+  else if (route === 'sessioni') { uiState.settingTab = 'sessioni'; renderSettingPage(); }
+  else if (route === 'setting-appuntamenti') { uiState.settingTab = 'appuntamenti'; renderSettingPage(); }
+  else if (route === 'setting') renderSettingPage();
+  else if (route === 'venditore-appuntamenti') { uiState.venditoreTab = 'appuntamenti'; renderVenditorePage(); }
+  else if (route === 'venditore-statistiche') { uiState.venditoreTab = 'statistiche'; renderVenditorePage(); }
+  else if (route === 'venditore') renderVenditorePage();
   else if (route === 'impostazioni') renderBuilderPage();
   else renderDashboard();
 }
 
+/**
+ * Barra sotto-tab condivisa da renderSettingPage/renderVenditorePage: HTML da anteporre
+ * al contenuto della schermata scelta (Appuntamenti/Sessioni o Appuntamenti/Statistiche).
+ * Le funzioni di rendering delle sotto-schermate restano quelle esistenti (renderAppuntamenti,
+ * renderSessioniList, renderVenditoreAppuntamenti, renderVenditoreStatistiche): accettano un
+ * parametro opzionale subTabBarHtml da anteporre al proprio markup, così tutto il resto del
+ * loro wiring interno (appRoot.querySelectorAll/getElementById) resta invariato.
+ */
+function renderSubTabsBar(kind, active) {
+  if (kind === 'setting') {
+    return `
+      <section class="card sub-tabs-bar">
+        <div class="sub-tabs">
+          <button class="tf-tab ${active === 'appuntamenti' ? 'active' : ''}" data-setting-tab="appuntamenti">Appuntamenti</button>
+          <button class="tf-tab ${active === 'sessioni' ? 'active' : ''}" data-setting-tab="sessioni">Sessioni</button>
+        </div>
+      </section>`;
+  }
+  return `
+    <section class="card sub-tabs-bar">
+      <div class="sub-tabs">
+        <button class="tf-tab ${active === 'appuntamenti' ? 'active' : ''}" data-venditore-tab="appuntamenti">Appuntamenti</button>
+        <button class="tf-tab ${active === 'statistiche' ? 'active' : ''}" data-venditore-tab="statistiche">Statistiche</button>
+      </div>
+    </section>`;
+}
+
+function wireSubTabsBar(kind) {
+  if (kind === 'setting') {
+    appRoot.querySelectorAll('[data-setting-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        uiState.settingTab = btn.dataset.settingTab;
+        location.hash = uiState.settingTab === 'sessioni' ? '#/sessioni' : '#/setting-appuntamenti';
+      });
+    });
+  } else {
+    appRoot.querySelectorAll('[data-venditore-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        uiState.venditoreTab = btn.dataset.venditoreTab;
+        location.hash = uiState.venditoreTab === 'statistiche' ? '#/venditore-statistiche' : '#/venditore-appuntamenti';
+      });
+    });
+  }
+}
+
+/** Wrapper "Setting": sotto-tab Appuntamenti/Sessioni, scelta dentro la schermata. */
+function renderSettingPage() {
+  const tab = uiState.settingTab || 'appuntamenti';
+  if (tab === 'sessioni') renderSessioniList();
+  else renderAppuntamenti();
+}
+
+/** Wrapper "Venditore": sotto-tab Appuntamenti/Statistiche, scelta dentro la schermata. */
+function renderVenditorePage() {
+  const tab = uiState.venditoreTab || 'appuntamenti';
+  if (tab === 'statistiche') renderVenditoreStatistiche();
+  else renderVenditoreAppuntamenti();
+}
+
 /* ---------- Dashboard ---------- */
 
+/**
+ * Dashboard — SOLO: Obiettivi Setter, Obiettivi Venditore, Andamento generale (KPI
+ * commissioni + grafici a linea Commissioni/Totale Venduto), calendario Commissioni in
+ * fondo. La vecchia sezione "Attività di chiamata" (chiamate/lead/esiti/pipeline/
+ * produttività) è stata spostata in Setting > Sessioni su richiesta esplicita
+ * dell'utente — vedi renderCallActivitySection.
+ */
 function renderDashboard() {
-  const range = getTimeframeRange(uiState.timeframe, uiState.customFrom, uiState.customTo);
-  const filteredSessions = getFilteredSessions(db, range, uiState.pipelineFilter);
-  const stats = computeStats(filteredSessions);
-
-  const prevRange = previousPeriod(range);
-  const prevSessions = getFilteredSessions(db, prevRange, uiState.pipelineFilter);
-  const prevStats = computeStats(prevSessions);
-
-  const callsTrend = trendDelta(stats.totalCalls, prevStats.totalCalls);
-  const leadsTrend = trendDelta(stats.totalLeads, prevStats.totalLeads);
-  const convTrend = trendDelta(stats.conversionRate, prevStats.conversionRate);
-
-  const allInRange = getFilteredSessions(db, range, 'all');
-  const byPipeline = {};
-  allInRange.forEach(s => {
-    if (!byPipeline[s.pipelineId]) byPipeline[s.pipelineId] = { name: s.pipelineName, sessions: [] };
-    byPipeline[s.pipelineId].sessions.push(s);
-  });
-  const pipelineRows = Object.values(byPipeline)
-    .map(p => ({ name: p.name, ...computeStats(p.sessions) }))
-    .sort((a, b) => b.conversionRate - a.conversionRate);
-
-  const pipelineOptions = db.pipelines.map(p =>
-    `<option value="${p.id}" ${uiState.pipelineFilter === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
-  ).join('');
-
-  const outcomeBars = stats.sortedOutcomes.length ? stats.sortedOutcomes.map(([label, count]) => {
-    const width = pct(count, stats.totalLeads);
-    return `
-      <div class="bar-row">
-        <div class="bar-label">${escapeHtml(label)}</div>
-        <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
-        <div class="bar-value">${count}</div>
-      </div>`;
-  }).join('') : '<p class="text-dim">Nessuna chiamata registrata in questo periodo.</p>';
-
-  const pipelineTableRows = pipelineRows.length ? pipelineRows.map(p => `
-    <tr>
-      <td>${escapeHtml(p.name)}</td>
-      <td>${p.totalLeads}</td>
-      <td>${p.responseRate}%</td>
-      <td>${p.conversionRate}%</td>
-    </tr>`).join('') : `<tr><td colspan="4" class="text-dim">Nessun dato</td></tr>`;
-
   const topSectionsHtml = renderDashboardTopSections();
+  const commissioniCalHtml = renderCommissioniCalendarSection();
 
   appRoot.innerHTML = `
     ${topSectionsHtml}
-
-    <div class="section-separator"><span class="eyebrow">Attività di chiamata (setting outbound)</span></div>
-
-    <section class="card filters-bar">
-      <div class="timeframe-pills">
-        ${Object.keys(TIMEFRAME_LABELS).filter(k => k !== 'custom').map(k =>
-          `<button class="pill ${uiState.timeframe === k ? 'active' : ''}" data-tf="${k}">${TIMEFRAME_LABELS[k]}</button>`
-        ).join('')}
-      </div>
-      <div class="custom-range">
-        <label>dal <input type="date" id="dateFrom" value="${uiState.customFrom ? uiState.customFrom : dateInputValue(range.start)}"></label>
-        <label>al <input type="date" id="dateTo" value="${uiState.customTo ? uiState.customTo : dateInputValue(range.end)}"></label>
-        <button class="btn-ghost" id="btnApplyRange">Applica</button>
-      </div>
-      <div class="pipeline-filter">
-        <select id="pipelineFilter">
-          <option value="all" ${uiState.pipelineFilter === 'all' ? 'selected' : ''}>Tutte le pipeline</option>
-          ${pipelineOptions}
-        </select>
-      </div>
-      <div class="filters-bar-actions">
-        <button class="btn-ghost" id="btnSessionReport">Report Sessione</button>
-      </div>
-    </section>
-
-    <section class="kpi-grid">
-      <div class="card kpi-card"><div class="kpi-value">${stats.totalCalls}</div><div class="kpi-label">Chiamate totali</div></div>
-      <div class="card kpi-card"><div class="kpi-value">${stats.totalLeads}</div><div class="kpi-label">Lead contattati</div></div>
-      <div class="card kpi-card"><div class="kpi-value">${stats.responseRate}%</div><div class="kpi-label">Tasso di risposta</div></div>
-      <div class="card kpi-card"><div class="kpi-value">${stats.conversionRate}%</div><div class="kpi-label">Tasso di conversione</div></div>
-    </section>
-
-    <section class="card trend-row">
-      <h3>Andamento vs periodo precedente</h3>
-      <div class="trend-grid">
-        ${trendItem('Chiamate', callsTrend)}
-        ${trendItem('Lead', leadsTrend)}
-        ${trendItem('Conversione', convTrend)}
-      </div>
-    </section>
-
-    <section class="two-col">
-      <div class="card">
-        <h3>Esiti nel periodo</h3>
-        <p class="text-dim">Come si chiudono le chiamate.</p>
-        <div class="bar-list">${outcomeBars}</div>
-      </div>
-      <div class="card">
-        <h3>Confronto pipeline</h3>
-        <table class="simple-table">
-          <thead><tr><th>Pipeline</th><th>Lead</th><th>Risposta</th><th>Conversione</th></tr></thead>
-          <tbody>${pipelineTableRows}</tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card productivity">
-      <h3>Produttività</h3>
-      <div class="productivity-grid">
-        <div><div class="stat-value">${stats.sessionsCount}</div><div class="stat-label">Sessioni</div></div>
-        <div><div class="stat-value">${stats.avgCallsPerSession}</div><div class="stat-label">Chiamate/sessione</div></div>
-        <div><div class="stat-value">${stats.avgLeadsPerSession}</div><div class="stat-label">Lead/sessione</div></div>
-        <div><div class="stat-value">${stats.callsPerHour}</div><div class="stat-label">Chiamate/ora</div></div>
-        <div><div class="stat-value stat-value-sm">${stats.mostFrequent ? escapeHtml(stats.mostFrequent.label) : '—'}</div><div class="stat-label">Esito più frequente</div></div>
-      </div>
-    </section>
+    ${commissioniCalHtml}
   `;
 
-  wireDashboardEvents();
   wireDashboardTopSectionEvents();
+  wireCommissioniCalendarSection();
   animateKpiValues(appRoot);
   applyMilestonePulses(appRoot);
 }
@@ -580,31 +567,6 @@ function trendItem(label, t) {
       <div class="trend-label">${label}</div>
       <div class="trend-value ${cls}">${arrow} ${t.diff}%</div>
     </div>`;
-}
-
-function wireDashboardEvents() {
-  appRoot.querySelectorAll('[data-tf]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      uiState.timeframe = btn.dataset.tf;
-      uiState.customFrom = null;
-      uiState.customTo = null;
-      renderDashboard();
-    });
-  });
-  document.getElementById('btnApplyRange').addEventListener('click', () => {
-    const from = document.getElementById('dateFrom').value;
-    const to = document.getElementById('dateTo').value;
-    if (!from || !to) return;
-    uiState.timeframe = 'custom';
-    uiState.customFrom = from;
-    uiState.customTo = to;
-    renderDashboard();
-  });
-  document.getElementById('pipelineFilter').addEventListener('change', (e) => {
-    uiState.pipelineFilter = e.target.value;
-    renderDashboard();
-  });
-  document.getElementById('btnSessionReport').addEventListener('click', generateSessionReport);
 }
 
 /* ============================================================================
@@ -768,21 +730,77 @@ function wireDashboardTopSectionEvents() {
     });
     goalInput.addEventListener('blur', commit);
   }
+
+  appRoot.querySelectorAll('[data-andamento-tf]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      uiState.andamentoTimeframe = btn.dataset.andamentoTf;
+      if (btn.dataset.andamentoTf !== 'custom') { uiState.andamentoCustomFrom = null; uiState.andamentoCustomTo = null; }
+      renderDashboard();
+    });
+  });
+  const btnAndamentoApply = document.getElementById('btnAndamentoApplyRange');
+  if (btnAndamentoApply) {
+    btnAndamentoApply.addEventListener('click', () => {
+      const from = document.getElementById('andamentoDateFrom').value;
+      const to = document.getElementById('andamentoDateTo').value;
+      if (!from || !to) return;
+      uiState.andamentoCustomFrom = from;
+      uiState.andamentoCustomTo = to;
+      renderDashboard();
+    });
+  }
+  appRoot.querySelectorAll('[data-andamento-comm-role]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      uiState.andamentoCommRole = btn.dataset.andamentoCommRole;
+      renderDashboard();
+    });
+  });
 }
 
-/* ---------- KPI commissioni complessive (dashboard) ---------- */
+/* ============================================================================
+ * Andamento generale (dashboard) — KPI commissioni timeframe-aware + due grafici a
+ * linea (Commissioni, Totale Venduto). Prima era fissa sul mese corrente; su richiesta
+ * esplicita dell'utente ora ha gli stessi timeframe delle sessioni (incluso un periodo
+ * personalizzato), e il grafico Commissioni ha in più un filtro Tutti/Setter/Venditore
+ * per vedere come sono cresciute le due parti separatamente nel tempo.
+ * ==========================================================================*/
 
 function renderCommissionKpiSection() {
-  const ranges = currentPeriodRanges();
-  const summary = computeCommissionSummary(db, ranges.month);
+  const tf = uiState.andamentoTimeframe || 'mese_corrente';
+  const range = getTimeframeRange(tf, uiState.andamentoCustomFrom, uiState.andamentoCustomTo);
+  const summary = computeCommissionSummary(db, range);
   const pace = db.settings.toggles.closingPace ? renderClosingPaceNote() : '';
   const personalBest = db.settings.toggles.personalBest ? renderPersonalBestBadge() : '';
 
+  const commRole = uiState.andamentoCommRole || 'all';
+  const commSeries = buildAndamentoSeries(range, tf, 'commissioni', commRole);
+  const venditoSeries = buildAndamentoSeries(range, tf, 'venduto', 'all');
+
+  const commChart = renderLineChart(commSeries, { color: commRole === 'setter' ? 'var(--setter-color)' : (commRole === 'venditore' ? 'var(--venditore-color)' : 'var(--accent)'), money: true });
+  const vendutoChart = renderLineChart(venditoSeries, { color: 'var(--accent)', money: true });
+
   return `
+    <div class="section-separator"><span class="eyebrow">Andamento generale</span></div>
+
+    <section class="card filters-bar">
+      <div class="timeframe-pills">
+        ${Object.keys(TIMEFRAME_LABELS).filter(k => k !== 'custom').map(k =>
+          `<button class="pill ${tf === k ? 'active' : ''}" data-andamento-tf="${k}">${TIMEFRAME_LABELS[k]}</button>`
+        ).join('')}
+        <button class="pill ${tf === 'custom' ? 'active' : ''}" data-andamento-tf="custom">Personalizzato</button>
+      </div>
+      ${tf === 'custom' ? `
+      <div class="custom-range">
+        <label>dal <input type="date" id="andamentoDateFrom" value="${uiState.andamentoCustomFrom ? uiState.andamentoCustomFrom : dateInputValue(range.start)}"></label>
+        <label>al <input type="date" id="andamentoDateTo" value="${uiState.andamentoCustomTo ? uiState.andamentoCustomTo : dateInputValue(range.end)}"></label>
+        <button class="btn-ghost" id="btnAndamentoApplyRange">Applica</button>
+      </div>` : ''}
+    </section>
+
     <section class="kpi-grid">
       <div class="card kpi-card accented" data-ticker-anchor="1">
         <div class="kpi-value" data-kpi-num="${summary.total}" data-kpi-money="1" data-kpi-display="€${summary.total}">€${summary.total}</div>
-        <div class="kpi-label">Commissioni Tot. (mese)</div>
+        <div class="kpi-label">Commissioni Tot.</div>
       </div>
       <div class="card kpi-card">
         <div class="kpi-value" data-kpi-num="${summary.setting}" data-kpi-money="1" data-kpi-display="€${summary.setting}">€${summary.setting}</div>
@@ -798,7 +816,115 @@ function renderCommissionKpiSection() {
       </div>
     </section>
     ${pace}${personalBest}
+
+    <section class="two-col">
+      <div class="card chart-card">
+        <div class="chart-card-header">
+          <h3>Commissioni nel tempo</h3>
+          <div class="chip-select-row" style="gap:4px;">
+            <button class="chip-select ${commRole === 'all' ? 'active' : ''}" data-andamento-comm-role="all">Tutti</button>
+            <button class="chip-select ${commRole === 'setter' ? 'active' : ''}" data-andamento-comm-role="setter">Setter</button>
+            <button class="chip-select ${commRole === 'venditore' ? 'active' : ''}" data-andamento-comm-role="venditore">Venditore</button>
+          </div>
+        </div>
+        ${commChart}
+      </div>
+      <div class="card chart-card">
+        <h3>Totale Venduto nel tempo</h3>
+        ${vendutoChart}
+      </div>
+    </section>
   `;
+}
+
+/**
+ * Serie storica per i grafici a linea "Andamento generale" — divide il range scelto in
+ * bucket temporali (stesso principio di computeFunnelSparkline, ma con più punti quando il
+ * range è ampio, per dare un vero andamento "a linea che sale" invece di pochi punti) e
+ * somma commissioni o totale venduto in ciascun bucket.
+ * - metric 'commissioni': somma commissionEventsInRange (opzionalmente filtrata per ruolo).
+ * - metric 'venduto': somma apptTotalSold() degli appuntamenti CHIUSI con scheduledAt nel
+ *   bucket (coerente con come viene calcolato "Totale Venduto" altrove — vedi
+ *   computeVenditoreStats.totalVenduto — ma qui su entrambi i ruoli).
+ */
+function buildAndamentoSeries(range, timeframe, metric, role) {
+  const totalMs = range.end.getTime() - range.start.getTime();
+  const totalDays = Math.max(1, Math.round(totalMs / 86400000));
+  // Un punto per giorno fino a 31gg, altrimenti ~30 bucket per non affollare il grafico
+  // su range molto ampi (90gg, mese scorso vs mese corrente ravvicinati, personalizzati lunghi).
+  const numBuckets = Math.min(totalDays, totalDays <= 31 ? totalDays : 30);
+  const stepMs = totalMs / numBuckets;
+
+  const buckets = [];
+  for (let i = 0; i < numBuckets; i++) {
+    const bStart = new Date(range.start.getTime() + stepMs * i);
+    const bEnd = i === numBuckets - 1 ? range.end : new Date(range.start.getTime() + stepMs * (i + 1) - 1);
+    buckets.push({ start: bStart, end: bEnd });
+  }
+
+  return buckets.map(b => {
+    if (metric === 'commissioni') {
+      const events = commissionEventsInRange(db, b, role === 'all' ? undefined : role);
+      return sumEvents(events);
+    }
+    const closedAppts = (db.appointments || []).filter(a => a.closed && a.scheduledAt && inRange(a.scheduledAt, b));
+    return round2(closedAppts.reduce((s, a) => s + apptTotalSold(a), 0));
+  });
+}
+
+/**
+ * Grafico a linea SVG minimale (nessuna libreria esterna): stroke colorato + area
+ * riempita con gradiente leggero sotto la linea, così il grafico è "un minimo colorato"
+ * come richiesto esplicitamente dall'utente invece di una semplice linea monocroma.
+ * opts.color accetta qualunque valore CSS valido (anche var(--...) del tema attivo).
+ */
+let lineChartIdCounter = 0;
+function renderLineChart(series, opts) {
+  opts = opts || {};
+  const color = opts.color || 'var(--accent)';
+  const money = !!opts.money;
+  const w = 560, h = 160, padX = 8, padY = 14;
+  const gradId = 'lcGrad' + (lineChartIdCounter++);
+
+  if (!series.length || series.every(v => v === 0)) {
+    return `<div class="chart-empty text-dim">Nessun dato nel periodo selezionato.</div>`;
+  }
+
+  const maxVal = Math.max(1, ...series);
+  const minVal = 0; // i valori (commissioni/venduto) non sono mai negativi
+  const n = series.length;
+  const xStep = n > 1 ? (w - padX * 2) / (n - 1) : 0;
+  const points = series.map((v, i) => {
+    const x = padX + xStep * i;
+    const y = padY + (1 - (v - minVal) / (maxVal - minVal || 1)) * (h - padY * 2);
+    return [x, y];
+  });
+
+  const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const areaPath = linePath + ` L${points[n - 1][0].toFixed(1)},${(h - padY).toFixed(1)} L${points[0][0].toFixed(1)},${(h - padY).toFixed(1)} Z`;
+
+  const lastVal = series[series.length - 1];
+  const firstVal = series[0];
+  const fmtVal = (v) => money ? `€${round2(v)}` : String(v);
+
+  return `
+    <div class="line-chart-wrap">
+      <svg class="line-chart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaPath}" fill="url(#${gradId})" stroke="none"/>
+        <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${points.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="${color}"/>`).join('')}
+      </svg>
+      <div class="line-chart-footer">
+        <span class="text-dim">Inizio: ${fmtVal(firstVal)}</span>
+        <span class="line-chart-last" style="color:${color};">Ultimo: ${fmtVal(lastVal)}</span>
+      </div>
+    </div>`;
 }
 
 /* ---------- Ritmo di chiusura (toggle 9) ---------- */
@@ -907,12 +1033,12 @@ async function generateSessionReport() {
 }
 
 /**
- * Report copia-incolla della schermata Appuntamenti — una riga per appuntamento con le
- * stesse voci della tabella (ruolo, nome, data/ora, presentato, chiuso) più cash
+ * Report copia-incolla della schermata Appuntamenti Setter — una riga per appuntamento
+ * con le stesse voci della tabella (nome, data/ora, presentato, chiuso) più cash
  * collected, totale venduto e la commissione che spetta su quella riga, così può essere
  * condiviso col direttore commerciale a fine mese per verificare chi si è presentato e
- * quanto spetta. Rispetta il filtro Ruolo attualmente selezionato (Tutti/Setter/Venditore)
- * e l'ordine mostrato a schermo (stesso array "rows" usato per renderAppuntamenti).
+ * quanto spetta. Vive nella sezione Setting (split Setter/Venditore): sempre e solo
+ * righe role:'setter' — vedi generateAppointmentsReport.
  */
 function buildAppointmentsReportText(rows, filterLabel) {
   const lines = [];
@@ -926,18 +1052,16 @@ function buildAppointmentsReportText(rows, filterLabel) {
   }
 
   const presentedLabel = (a) => {
-    if (a.role === 'setter') {
-      if (a.presentedStatus === 'presented') return 'Presentato';
-      if (a.presentedStatus === 'confirmed24h') return 'Confermato24h';
-      return 'No';
-    }
-    return a.presentedStatus === 'presented' ? 'Sì' : 'No';
+    if (a.presentedStatus === 'presented') return 'Presentato';
+    if (a.presentedStatus === 'confirmed24h') return 'Confermato24h';
+    if (a.presentedStatus === 'no_show') return 'No Show';
+    return 'No';
   };
 
   let totalCash = 0, totalSold = 0, totalCommission = 0;
 
   rows.forEach(a => {
-    const roleLabel = a.role === 'setter' ? 'Setter' : 'Venditore';
+    const roleLabel = 'Setter';
     const cash = a.cashCollected || 0;
     const sold = apptTotalSold(a);
     const commission = sumEvents(commissionEventsForAppointment(a));
@@ -962,14 +1086,84 @@ function buildAppointmentsReportText(rows, filterLabel) {
   return lines.join('\n');
 }
 
+// Report per il direttore commerciale — vive nella sezione Setting (split Setter/
+// Venditore), quindi copre sempre e solo gli appuntamenti Setter, rispettando l'eventuale
+// filtro "Solo No Show" attivo sulla tabella così il report riflette quello che si vede.
 async function generateAppointmentsReport() {
-  const filter = uiState.crmRoleFilter || 'all';
-  const rows = [...db.appointments]
-    .filter(a => filter === 'all' || a.role === filter)
-    .sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
-  const filterLabel = filter === 'all' ? 'Tutti' : (filter === 'setter' ? 'Setter' : 'Venditore');
+  const filter = uiState.crmSetterFilter || 'all';
+  let rows = db.appointments.filter(a => a.role === 'setter');
+  if (filter === 'no_show') rows = rows.filter(a => a.presentedStatus === 'no_show');
+  rows = [...rows].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+  const filterLabel = filter === 'no_show' ? 'Setter — solo No Show' : 'Setter';
 
   const text = buildAppointmentsReportText(rows, filterLabel);
+  const copied = await copyToClipboard(text);
+  showReportModal(text, copied, 'Report Appuntamenti');
+}
+
+/**
+ * Report copia-incolla della schermata Appuntamenti Venditore — stessa idea del report
+ * Setter, ma con le voci proprie del funnel Venditore: stato trattativa (dealStage) al
+ * posto di presentato/chiuso booleani, e nota sull'eventuale prossimo follow-up così chi
+ * legge il report vede anche cosa è ancora aperto, non solo i chiusi. Rispetta il filtro
+ * attivo sulla tabella (Tutti/Trattativa/No Show/Perso) come già fa quello Setter.
+ */
+function buildVenditoreAppointmentsReportText(rows, filterLabel) {
+  const lines = [];
+  lines.push(`Report Appuntamenti — ${filterLabel}`);
+  lines.push(`Generato il ${fmtDate(new Date())}`);
+  lines.push('');
+
+  if (!rows.length) {
+    lines.push('Nessun appuntamento in questo elenco.');
+    return lines.join('\n');
+  }
+
+  let totalCash = 0, totalSold = 0, totalCommission = 0, totalChiusi = 0;
+
+  rows.forEach(a => {
+    const stageLabel = a.dealStage && dealStageDef(a.dealStage) ? dealStageDef(a.dealStage).label : 'Da impostare';
+    const cash = a.cashCollected || 0;
+    const sold = apptTotalSold(a);
+    const commission = sumEvents(commissionEventsForAppointment(a));
+    totalCash += cash;
+    totalSold += sold;
+    totalCommission += commission;
+    if (a.closed) totalChiusi += 1;
+
+    const lastNote = (a.notes || []).length ? a.notes[a.notes.length - 1].text : null;
+
+    lines.push(`${a.clientName || '(senza nome)'} — Venditore`);
+    lines.push(`  Data/ora: ${a.scheduledAt ? fmtDateTime(a.scheduledAt) : '—'}`);
+    lines.push(`  Stato trattativa: ${stageLabel}`);
+    lines.push(`  Cash collected: €${round2(cash)} · Totale venduto: €${round2(sold)}`);
+    lines.push(`  Commissione: €${round2(commission)}`);
+    if (a.nextFollowUpDate) lines.push(`  Prossimo follow-up: ${fmtDate(a.nextFollowUpDate)}`);
+    if (lastNote) lines.push(`  Ultima nota: ${lastNote}`);
+    lines.push('');
+  });
+
+  lines.push('---');
+  lines.push(`Totale appuntamenti: ${rows.length}`);
+  lines.push(`Chiusi: ${totalChiusi}`);
+  lines.push(`Totale cash collected: €${round2(totalCash)}`);
+  lines.push(`Totale venduto: €${round2(totalSold)}`);
+  lines.push(`Totale commissioni: €${round2(totalCommission)}`);
+
+  return lines.join('\n');
+}
+
+// Report per il direttore commerciale — sezione Venditore, rispetta l'eventuale filtro
+// (Tutti/Trattativa/No Show/Perso) attivo sulla tabella, come il report Setter.
+async function generateVenditoreAppointmentsReport() {
+  const filter = uiState.crmVenditoreFilter || 'all';
+  let rows = db.appointments.filter(a => a.role === 'venditore');
+  if (filter !== 'all') rows = rows.filter(a => a.dealStage === filter);
+  rows = [...rows].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+  const filterLabels = { all: 'Venditore', trattativa: 'Venditore — solo Trattativa', no_show: 'Venditore — solo No Show', perso: 'Venditore — solo Perso' };
+  const filterLabel = filterLabels[filter] || 'Venditore';
+
+  const text = buildVenditoreAppointmentsReportText(rows, filterLabel);
   const copied = await copyToClipboard(text);
   showReportModal(text, copied, 'Report Appuntamenti');
 }
@@ -1034,6 +1228,7 @@ function showReportModal(text, copied, title) {
 /* ---------- Sessioni (elenco + dettaglio) ---------- */
 
 function renderSessioniList() {
+  uiState.settingTab = 'sessioni';
   const filterId = uiState.sessioniPipelineFilter || 'all';
   const sessions = [...db.sessions]
     .filter(s => filterId === 'all' || s.pipelineId === filterId)
@@ -1061,7 +1256,12 @@ function renderSessioniList() {
       </div>`;
   }).join('') : '<p class="text-dim">Nessuna sessione registrata ancora. Inizia la prima!</p>';
 
+  const activityHtml = renderCallActivitySection();
+
   appRoot.innerHTML = `
+    ${renderSubTabsBar('setting', 'sessioni')}
+    ${activityHtml}
+    <div class="section-separator"><span class="eyebrow">Elenco sessioni</span></div>
     <section class="card filters-bar">
       <select id="sessioniPipelineFilter">
         <option value="all" ${filterId === 'all' ? 'selected' : ''}>Tutte le pipeline</option>
@@ -1071,6 +1271,8 @@ function renderSessioniList() {
     <section class="session-list">${rows}</section>
   `;
 
+  wireSubTabsBar('setting');
+  wireCallActivitySection();
   document.getElementById('sessioniPipelineFilter').addEventListener('change', (e) => {
     uiState.sessioniPipelineFilter = e.target.value;
     renderSessioniList();
@@ -1078,6 +1280,154 @@ function renderSessioniList() {
   appRoot.querySelectorAll('.session-card').forEach(card => {
     card.addEventListener('click', () => { location.hash = '#/sessioni/' + card.dataset.sid; });
   });
+  animateKpiValues(appRoot);
+}
+
+/**
+ * Blocco "Attività di chiamata" (timeframe/pipeline, KPI chiamate/lead/risposta/conversione,
+ * andamento vs periodo precedente, esiti nel periodo, confronto pipeline, produttività) —
+ * SPOSTATO dalla Dashboard qui in Setting > Sessioni su richiesta esplicita dell'utente
+ * ("non deve esserci la sezione attività di chiamata [in dashboard], quella và nella parte
+ * setting"). Logica invariata, solo la posizione è cambiata; usa sempre uiState.timeframe/
+ * uiState.pipelineFilter (stesso stato di prima, non duplicato).
+ */
+function renderCallActivitySection() {
+  const range = getTimeframeRange(uiState.timeframe, uiState.customFrom, uiState.customTo);
+  const filteredSessions = getFilteredSessions(db, range, uiState.pipelineFilter);
+  const stats = computeStats(filteredSessions);
+
+  const prevRange = previousPeriod(range);
+  const prevSessions = getFilteredSessions(db, prevRange, uiState.pipelineFilter);
+  const prevStats = computeStats(prevSessions);
+
+  const callsTrend = trendDelta(stats.totalCalls, prevStats.totalCalls);
+  const leadsTrend = trendDelta(stats.totalLeads, prevStats.totalLeads);
+  const convTrend = trendDelta(stats.conversionRate, prevStats.conversionRate);
+
+  const allInRange = getFilteredSessions(db, range, 'all');
+  const byPipeline = {};
+  allInRange.forEach(s => {
+    if (!byPipeline[s.pipelineId]) byPipeline[s.pipelineId] = { name: s.pipelineName, sessions: [] };
+    byPipeline[s.pipelineId].sessions.push(s);
+  });
+  const pipelineRows = Object.values(byPipeline)
+    .map(p => ({ name: p.name, ...computeStats(p.sessions) }))
+    .sort((a, b) => b.conversionRate - a.conversionRate);
+
+  const pipelineOptions = db.pipelines.map(p =>
+    `<option value="${p.id}" ${uiState.pipelineFilter === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  const outcomeBars = stats.sortedOutcomes.length ? stats.sortedOutcomes.map(([label, count]) => {
+    const width = pct(count, stats.totalLeads);
+    return `
+      <div class="bar-row">
+        <div class="bar-label">${escapeHtml(label)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+        <div class="bar-value">${count}</div>
+      </div>`;
+  }).join('') : '<p class="text-dim">Nessuna chiamata registrata in questo periodo.</p>';
+
+  const pipelineTableRows = pipelineRows.length ? pipelineRows.map(p => `
+    <tr>
+      <td>${escapeHtml(p.name)}</td>
+      <td>${p.totalLeads}</td>
+      <td>${p.responseRate}%</td>
+      <td>${p.conversionRate}%</td>
+    </tr>`).join('') : `<tr><td colspan="4" class="text-dim">Nessun dato</td></tr>`;
+
+  return `
+    <div class="section-separator"><span class="eyebrow">Attività di chiamata</span></div>
+
+    <section class="card filters-bar">
+      <div class="timeframe-pills">
+        ${Object.keys(TIMEFRAME_LABELS).filter(k => k !== 'custom').map(k =>
+          `<button class="pill ${uiState.timeframe === k ? 'active' : ''}" data-tf="${k}">${TIMEFRAME_LABELS[k]}</button>`
+        ).join('')}
+      </div>
+      <div class="custom-range">
+        <label>dal <input type="date" id="dateFrom" value="${uiState.customFrom ? uiState.customFrom : dateInputValue(range.start)}"></label>
+        <label>al <input type="date" id="dateTo" value="${uiState.customTo ? uiState.customTo : dateInputValue(range.end)}"></label>
+        <button class="btn-ghost" id="btnApplyRange">Applica</button>
+      </div>
+      <div class="pipeline-filter">
+        <select id="pipelineFilter">
+          <option value="all" ${uiState.pipelineFilter === 'all' ? 'selected' : ''}>Tutte le pipeline</option>
+          ${pipelineOptions}
+        </select>
+      </div>
+      <div class="filters-bar-actions">
+        <button class="btn-ghost" id="btnSessionReport">Report Sessione</button>
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      <div class="card kpi-card"><div class="kpi-value">${stats.totalCalls}</div><div class="kpi-label">Chiamate totali</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.totalLeads}</div><div class="kpi-label">Lead contattati</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.responseRate}%</div><div class="kpi-label">Tasso di risposta</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.conversionRate}%</div><div class="kpi-label">Tasso di conversione</div></div>
+    </section>
+
+    <section class="card trend-row">
+      <h3>Andamento vs periodo precedente</h3>
+      <div class="trend-grid">
+        ${trendItem('Chiamate', callsTrend)}
+        ${trendItem('Lead', leadsTrend)}
+        ${trendItem('Conversione', convTrend)}
+      </div>
+    </section>
+
+    <section class="two-col">
+      <div class="card">
+        <h3>Esiti nel periodo</h3>
+        <p class="text-dim">Come si chiudono le chiamate.</p>
+        <div class="bar-list">${outcomeBars}</div>
+      </div>
+      <div class="card">
+        <h3>Confronto pipeline</h3>
+        <table class="simple-table">
+          <thead><tr><th>Pipeline</th><th>Lead</th><th>Risposta</th><th>Conversione</th></tr></thead>
+          <tbody>${pipelineTableRows}</tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card productivity">
+      <h3>Produttività</h3>
+      <div class="productivity-grid">
+        <div><div class="stat-value">${stats.sessionsCount}</div><div class="stat-label">Sessioni</div></div>
+        <div><div class="stat-value">${stats.avgCallsPerSession}</div><div class="stat-label">Chiamate/sessione</div></div>
+        <div><div class="stat-value">${stats.avgLeadsPerSession}</div><div class="stat-label">Lead/sessione</div></div>
+        <div><div class="stat-value">${stats.callsPerHour}</div><div class="stat-label">Chiamate/ora</div></div>
+        <div><div class="stat-value stat-value-sm">${stats.mostFrequent ? escapeHtml(stats.mostFrequent.label) : '—'}</div><div class="stat-label">Esito più frequente</div></div>
+      </div>
+    </section>
+  `;
+}
+
+function wireCallActivitySection() {
+  appRoot.querySelectorAll('[data-tf]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      uiState.timeframe = btn.dataset.tf;
+      uiState.customFrom = null;
+      uiState.customTo = null;
+      renderSessioniList();
+    });
+  });
+  document.getElementById('btnApplyRange').addEventListener('click', () => {
+    const from = document.getElementById('dateFrom').value;
+    const to = document.getElementById('dateTo').value;
+    if (!from || !to) return;
+    uiState.timeframe = 'custom';
+    uiState.customFrom = from;
+    uiState.customTo = to;
+    renderSessioniList();
+  });
+  document.getElementById('pipelineFilter').addEventListener('change', (e) => {
+    uiState.pipelineFilter = e.target.value;
+    renderSessioniList();
+  });
+  document.getElementById('btnSessionReport').addEventListener('click', generateSessionReport);
 }
 
 function renderSessioneDetail(id) {
@@ -1135,6 +1485,12 @@ function renderSessioneDetail(id) {
  * su db.appointments in storage.js). closedAt resta null finché non viene marcato
  * closed=true (vedi setAppointmentClosed) — è il campo che determina il mese di
  * incasso del cashCollected iniziale (vedi utils.js:appointmentCashDate).
+ *
+ * Split Setter/Venditore: presentedStatus/presentedAt restano il modello del Setter
+ * (invariato). Il Venditore usa invece dealStage (vedi DEAL_STAGES) — uno stato
+ * trattativa a scelta singola che sostituisce sia "presentato" sia "chiuso" per quel
+ * ruolo; note[] e nextFollowUpDate sono campi aggiuntivi usati solo lato Venditore
+ * (vedi renderVenditoreApptRow/openNotesModal).
  */
 function newAppointment(role) {
   return {
@@ -1151,34 +1507,95 @@ function newAppointment(role) {
     cashCollected: 0,
     totalSold: 0,
     installments: [],
-    linkedAppointmentId: null
+    linkedAppointmentId: null,
+    dealStage: null,          // solo Venditore — vedi DEAL_STAGES
+    notes: [],                // solo Venditore — { id, text, author, createdAt }
+    nextFollowUpDate: null    // solo Venditore — YYYY-MM-DD (solo data, non ora)
   };
 }
+
+/**
+ * Stati trattativa del Venditore (sostituiscono Presentato/Chiuso per questo ruolo).
+ * Scelti dall'utente con schema colori esplicito. "chiusiSet" marca gli stati che
+ * contano come chiusura ai fini di commissioni/funnel "Chiusi" (Contratto Firmato e
+ * Chiuso — entrambi implicano soldi incassati/da incassare); "presentedSet" marca gli
+ * stati che implicano che il lead si sia presentato (tutti tranne No Show, che per
+ * definizione è l'assenza del lead — vedi computeFunnelValues per come viene usato).
+ */
+const DEAL_STAGES = [
+  { key: 'no_show',           label: 'No Show',           color: 'mustard',  isClosed: false, isPresented: false },
+  { key: 'annullato',         label: 'Annullato',         color: 'slate',    isClosed: false, isPresented: true },
+  { key: 'trattativa',        label: 'Trattativa',        color: 'sky',      isClosed: false, isPresented: true },
+  { key: 'contratto_firmato', label: 'Contratto Firmato', color: 'mint',     isClosed: true,  isPresented: true },
+  { key: 'chiuso',            label: 'Chiuso',            color: 'forest',   isClosed: true,  isPresented: true },
+  { key: 'perso',             label: 'Perso',             color: 'crimson',  isClosed: false, isPresented: true }
+];
+function dealStageDef(key) { return DEAL_STAGES.find(s => s.key === key) || null; }
 
 function apptTotalSold(apt) {
   // Il totale venduto è editabile direttamente, ma se ci sono rate esplicite che
   // superano il valore salvato, mostriamo il massimo tra i due per coerenza visiva
-  // (l'utente può comunque editare totalSold a mano in qualunque momento).
-  const instSum = (apt.installments || []).reduce((s, i) => s + (i.amount || 0), 0);
+  // (l'utente può comunque editare totalSold a mano in qualunque momento). Le rate
+  // esplicite includono la rata sintetica "Acconto" (vedi getEffectiveInstallments),
+  // quindi il cash collected è già conteggiato qui una sola volta.
+  const instSum = getEffectiveInstallments(apt).reduce((s, i) => s + (i.amount || 0), 0);
   return Math.max(apt.totalSold || 0, instSum);
 }
 
+/**
+ * CORREZIONE (segnalata dall'utente): prima il cash collected generava un evento di
+ * commissione a parte ("_cash0"), indipendente dalle rate — se l'utente inseriva poi
+ * il totale pacchetto reale come rate (es. 5100€), il tool sommava commissioni sia sul
+ * cash collected (200€) sia sulle rate, contando quei 200€ due volte.
+ *
+ * Ora il cash collected è semplicemente la PRIMA rata, automatica e già pagata: questa
+ * funzione restituisce le rate "effettive" di un appuntamento — una rata sintetica
+ * "Acconto" pari a cashCollected (se > 0), seguita dalle rate vere e proprie inserite
+ * dall'utente. Usata sia per il calcolo del totale (apptTotalSold) sia per generare gli
+ * eventi di commissione (commissionEventsForAppointment) — così l'acconto viene contato
+ * una volta sola ovunque, e l'utente nel popup rate deve aggiungere solo l'importo
+ * MANCANTE rispetto a quanto già incassato.
+ */
+function getEffectiveInstallments(apt) {
+  const real = apt.installments || [];
+  if (!apt.cashCollected || apt.cashCollected <= 0) return real;
+  const depositInst = {
+    id: 'deposit',
+    label: 'Acconto (cash collected)',
+    amount: apt.cashCollected,
+    dueDate: appointmentCashDate(apt),
+    paid: true,
+    paidDate: appointmentCashDate(apt),
+    isDeposit: true
+  };
+  return [depositInst, ...real];
+}
+
+/**
+ * Sezione Appuntamenti — SOLO Setter (split Setter/Venditore): questa tabella e tutte
+ * le funzioni sottostanti (renderApptRow/wireAppuntamentiEvents/addBlankAppointmentRow)
+ * mostrano/creano sempre e solo righe role:'setter'. La versione Venditore è un sistema
+ * di rendering separato (vedi renderVenditoreAppuntamenti più sotto) con un layout e un
+ * modello di stato (dealStage) diversi.
+ */
 function renderAppuntamenti() {
-  const filter = uiState.crmRoleFilter || 'all';
-  const rows = [...db.appointments]
-    .filter(a => filter === 'all' || a.role === filter)
-    .sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+  uiState.settingTab = 'appuntamenti';
+  const filter = uiState.crmSetterFilter || 'all'; // 'all' | 'no_show'
+  let rows = db.appointments.filter(a => a.role === 'setter');
+  if (filter === 'no_show') rows = rows.filter(a => a.presentedStatus === 'no_show');
+  rows = [...rows].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
 
   const rowsHtml = rows.length ? rows.map(renderApptRow).join('') : '';
 
   appRoot.innerHTML = `
+    ${renderSubTabsBar('setting', 'appuntamenti')}
     <section class="card crm-toolbar">
       <div class="crm-filters">
-        <button class="pill ${filter === 'all' ? 'active' : ''}" data-crm-filter="all">Tutti</button>
-        <button class="pill ${filter === 'setter' ? 'active' : ''}" data-crm-filter="setter">Setter</button>
-        <button class="pill ${filter === 'venditore' ? 'active' : ''}" data-crm-filter="venditore">Venditore</button>
+        <button class="pill ${filter === 'all' ? 'active' : ''}" data-crm-setter-filter="all">Tutti</button>
+        <button class="pill ${filter === 'no_show' ? 'active' : ''}" data-crm-setter-filter="no_show">Solo No Show</button>
       </div>
       <div style="display:flex; gap:8px;">
+        <button class="btn-ghost" id="btnApptCalendar">📅 Calendario</button>
         <button class="btn-ghost" id="btnApptReport">Report</button>
         <button class="btn-primary" id="btnNewAppt">+ Nuovo Appuntamento</button>
       </div>
@@ -1188,7 +1605,7 @@ function renderAppuntamenti() {
       <table class="crm-table">
         <thead>
           <tr>
-            <th>Ruolo</th><th>Nome / Telefono</th><th>Data/Ora</th><th>Presentato</th><th>Chiuso</th>
+            <th>Nome / Telefono</th><th>Data/Ora</th><th>Presentato</th><th>Chiuso</th>
             <th>Cash Collected</th><th>Totale Venduto</th><th></th>
           </tr>
         </thead>
@@ -1201,29 +1618,23 @@ function renderAppuntamenti() {
 }
 
 /**
- * Riga della tabella Appuntamenti — tutti i campi sono editabili INLINE, direttamente
- * nella riga (niente modal "Nuovo Appuntamento": vedi wireAppuntamentiEvents, che crea
- * la riga vuota e la aggiunge subito a db.appointments). Ruolo/Presentato/Chiuso sono
- * chip cliccabili (stesso pattern ovunque nell'app), Nome/Telefono/Data-ora sono input
- * nativi con autosave su change/blur, coerente con Cash Collected già esistente.
+ * Riga della tabella Appuntamenti Setter — tutti i campi sono editabili INLINE,
+ * direttamente nella riga (niente modal "Nuovo Appuntamento": vedi
+ * wireAppuntamentiEvents, che crea la riga vuota e la aggiunge subito a
+ * db.appointments). Presentato/Chiuso sono chip cliccabili, Nome/Telefono/Data-ora sono
+ * input nativi con autosave su change/blur, coerente con Cash Collected già esistente.
+ *
+ * "No Show" aggiunto come quarta opzione di Presentato (oltre No/Confermato24h/Presentato)
+ * su richiesta esplicita dell'utente, per poter filtrare i lead da richiamare per il
+ * recupero — vedi il filtro "Solo No Show" in renderAppuntamenti.
  */
 function renderApptRow(a) {
-  const isSetter = a.role === 'setter';
-  const roleChips = `
-      <div class="crm-chip-group">
-        <button class="crm-chip ${isSetter ? 'active' : ''}" data-set-role="${a.id}" data-val="setter">Setter</button>
-        <button class="crm-chip ${!isSetter ? 'active' : ''}" data-set-role="${a.id}" data-val="venditore">Venditore</button>
-      </div>`;
-
-  const presentedChips = isSetter ? `
+  const presentedChips = `
       <div class="crm-chip-group">
         <button class="crm-chip ${a.presentedStatus === 'no' ? 'active' : ''}" data-set-presented="${a.id}" data-val="no">No</button>
         <button class="crm-chip ${a.presentedStatus === 'confirmed24h' ? 'active' : ''}" data-set-presented="${a.id}" data-val="confirmed24h">Confermato24h</button>
         <button class="crm-chip ${a.presentedStatus === 'presented' ? 'active' : ''}" data-set-presented="${a.id}" data-val="presented">Presentato</button>
-      </div>` : `
-      <div class="crm-chip-group">
-        <button class="crm-chip ${a.presentedStatus !== 'presented' ? 'active' : ''}" data-set-presented="${a.id}" data-val="no">No</button>
-        <button class="crm-chip ${a.presentedStatus === 'presented' ? 'active' : ''}" data-set-presented="${a.id}" data-val="presented">Sì</button>
+        <button class="crm-chip danger-chip ${a.presentedStatus === 'no_show' ? 'active' : ''}" data-set-presented="${a.id}" data-val="no_show">No Show</button>
       </div>`;
 
   const closedChips = `
@@ -1237,7 +1648,6 @@ function renderApptRow(a) {
 
   return `
     <tr data-appt-row="${a.id}">
-      <td class="crm-cell-center">${roleChips}</td>
       <td>
         <input type="text" class="crm-inline-input crm-name-input" data-name-input="${a.id}" value="${escapeHtml(a.clientName || '')}" placeholder="Nome e cognome">
         <input type="text" class="crm-inline-input crm-phone-input" data-phone-input="${a.id}" value="${escapeHtml(a.phone || '')}" placeholder="Telefono (facoltativo)">
@@ -1253,29 +1663,15 @@ function renderApptRow(a) {
 }
 
 function wireAppuntamentiEvents() {
-  appRoot.querySelectorAll('[data-crm-filter]').forEach(btn => {
-    btn.addEventListener('click', () => { uiState.crmRoleFilter = btn.dataset.crmFilter; renderAppuntamenti(); });
+  wireSubTabsBar('setting');
+  appRoot.querySelectorAll('[data-crm-setter-filter]').forEach(btn => {
+    btn.addEventListener('click', () => { uiState.crmSetterFilter = btn.dataset.crmSetterFilter; renderAppuntamenti(); });
   });
   document.getElementById('btnNewAppt').addEventListener('click', () => {
-    // Se il filtro Ruolo attivo è Setter o Venditore, la nuova riga nasce con quel
-    // ruolo — altrimenti (filtro "Tutti") resta il default Setter. Prima creava sempre
-    // una riga Setter: con il filtro su "Venditore" la riga nasceva subito nascosta
-    // dal filtro stesso, sembrando che il pulsante non facesse nulla.
-    const filter = uiState.crmRoleFilter;
-    const role = (filter === 'setter' || filter === 'venditore') ? filter : 'setter';
-    addBlankAppointmentRow(role);
+    addBlankAppointmentRow('setter');
   });
   document.getElementById('btnApptReport').addEventListener('click', generateAppointmentsReport);
-
-  appRoot.querySelectorAll('[data-set-role]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const apt = db.appointments.find(x => x.id === btn.dataset.setRole);
-      if (!apt) return;
-      apt.role = btn.dataset.val;
-      persist();
-      renderAppuntamenti();
-    });
-  });
+  document.getElementById('btnApptCalendar').addEventListener('click', () => openAppointmentsCalendarModal('setter'));
 
   appRoot.querySelectorAll('[data-name-input]').forEach(input => {
     input.addEventListener('change', () => {
@@ -1335,11 +1731,13 @@ function wireAppuntamentiEvents() {
     input.addEventListener('change', () => {
       const apt = db.appointments.find(x => x.id === input.dataset.cashInput);
       if (!apt) return;
-      const prevCommission = apt.closed ? commissionEventsForAppointment(apt).filter(e => e.id === apt.id + '_cash0').reduce((s, e) => s + e.amount, 0) : 0;
+      // L'acconto (cash collected) è ora la rata sintetica "_deposit" (vedi
+      // getEffectiveInstallments) — il suo id evento è apt.id + '_deposit'.
+      const prevCommission = apt.closed ? commissionEventsForAppointment(apt).filter(e => e.id === apt.id + '_deposit').reduce((s, e) => s + e.amount, 0) : 0;
       apt.cashCollected = Math.max(0, parseFloat(input.value) || 0);
       persist();
       if (apt.closed && db.settings.toggles.liveTicker) {
-        const newCommission = commissionEventsForAppointment(apt).filter(e => e.id === apt.id + '_cash0').reduce((s, e) => s + e.amount, 0);
+        const newCommission = commissionEventsForAppointment(apt).filter(e => e.id === apt.id + '_deposit').reduce((s, e) => s + e.amount, 0);
         if (newCommission > prevCommission) showCommissionTicker(newCommission - prevCommission);
       }
       renderAppuntamenti();
@@ -1374,7 +1772,7 @@ function addBlankAppointmentRow(role) {
   const apt = newAppointment(role || 'setter');
   db.appointments.unshift(apt);
   persist();
-  renderAppuntamenti();
+  if (role === 'venditore') renderVenditoreAppuntamenti(); else renderAppuntamenti();
   const nameInput = appRoot.querySelector(`[data-name-input="${apt.id}"]`);
   if (nameInput) nameInput.focus();
 }
@@ -1411,15 +1809,377 @@ function anyGoalComplete() {
   return (targetSetter > 0 && setterVals.chiusi >= targetSetter) || (targetVenditore > 0 && venditoreVals.chiusi >= targetVenditore);
 }
 
-/* ---------- Popup rate (installments) ---------- */
+/* ============================================================================
+ * Appuntamenti — VENDITORE (split Setter/Venditore). Layout e modello di stato
+ * completamente separati dalla tabella Setter qui sopra: qui il "Presentato"/"Chiuso"
+ * booleani sono sostituiti da un unico stato trattativa a scelta singola (dealStage —
+ * vedi DEAL_STAGES), e al posto di Accordi/Touchpoint ci sono Note (cronologia) e Data
+ * Prossimo Follow-up.
+ * ==========================================================================*/
 
-function openInstallmentsModal(apptId) {
-  const apt = db.appointments.find(x => x.id === apptId);
-  if (!apt) return;
-  renderInstallmentsModal(apt);
+function applyDealStage(apt, stageKey) {
+  const wasComplete = anyGoalComplete();
+  apt.dealStage = stageKey || null;
+  const def = dealStageDef(stageKey);
+  apt.closed = !!(def && def.isClosed);
+  if (apt.closed && !apt.closedAt) apt.closedAt = new Date().toISOString();
+  if (!apt.closed) apt.closedAt = null;
+  persist();
+
+  if (apt.closed && db.settings.toggles.closeSound) playCloseSound();
+  const nowComplete = anyGoalComplete();
+  if (apt.closed && !wasComplete && nowComplete) {
+    if (db.settings.toggles.confetti) fireConfetti();
+    if (db.settings.toggles.levelUpSound) playLevelUpSound();
+  }
 }
 
-function renderInstallmentsModal(apt) {
+function renderVenditoreAppuntamenti() {
+  uiState.venditoreTab = 'appuntamenti';
+  const filter = uiState.crmVenditoreFilter || 'all'; // 'all' | 'trattativa' | 'no_show' | 'perso'
+  let rows = db.appointments.filter(a => a.role === 'venditore');
+  if (filter !== 'all') rows = rows.filter(a => a.dealStage === filter);
+  rows = [...rows].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+
+  const rowsHtml = rows.length ? rows.map(renderVenditoreApptRow).join('') : '';
+
+  appRoot.innerHTML = `
+    ${renderSubTabsBar('venditore', 'appuntamenti')}
+    <section class="card crm-toolbar">
+      <div class="crm-filters">
+        <button class="pill ${filter === 'all' ? 'active' : ''}" data-crm-vnd-filter="all">Tutti</button>
+        <button class="pill ${filter === 'trattativa' ? 'active' : ''}" data-crm-vnd-filter="trattativa">Trattativa</button>
+        <button class="pill ${filter === 'no_show' ? 'active' : ''}" data-crm-vnd-filter="no_show">No Show</button>
+        <button class="pill ${filter === 'perso' ? 'active' : ''}" data-crm-vnd-filter="perso">Perso</button>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-ghost" id="btnApptCalendarVnd">📅 Calendario</button>
+        <button class="btn-ghost" id="btnApptReportVnd">Report</button>
+        <button class="btn-primary" id="btnNewApptVnd">+ Nuovo Appuntamento</button>
+      </div>
+    </section>
+    <div class="two-col">
+      <section class="card crm-table-wrap" style="grid-column: 1 / -1;">
+        ${rows.length ? `
+        <table class="crm-table">
+          <thead>
+            <tr>
+              <th>Nome / Telefono</th><th>Data/Ora</th><th>Stato trattativa</th>
+              <th>Cash Collected</th><th>Totale Venduto</th><th>Note / Follow-up</th><th></th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>` : '<p class="text-dim">Nessun appuntamento ancora. Crea il primo con "+ Nuovo Appuntamento".</p>'}
+      </section>
+    </div>
+    ${renderCallRecordingsSection()}
+  `;
+
+  wireVenditoreAppuntamentiEvents();
+}
+
+function renderVenditoreApptRow(a) {
+  const stageOptionsHtml = DEAL_STAGES.map(s =>
+    `<option value="${s.key}" ${a.dealStage === s.key ? 'selected' : ''}>${escapeHtml(s.label)}</option>`
+  ).join('');
+  const currentStage = a.dealStage || '';
+
+  const totalSold = apptTotalSold(a);
+  const noteCount = (a.notes || []).length;
+  const followUpLabel = a.nextFollowUpDate ? fmtDate(a.nextFollowUpDate) : 'Nessuna';
+
+  return `
+    <tr data-appt-row="${a.id}">
+      <td>
+        <input type="text" class="crm-inline-input crm-name-input" data-name-input="${a.id}" value="${escapeHtml(a.clientName || '')}" placeholder="Nome e cognome">
+        <div class="crm-phone-row">
+          <input type="text" class="crm-inline-input crm-phone-input" data-phone-input="${a.id}" value="${escapeHtml(a.phone || '')}" placeholder="Telefono (facoltativo)">
+          <button class="crm-copy-phone-btn" data-copy-phone="${a.id}" title="Copia numero">⧉</button>
+        </div>
+      </td>
+      <td class="crm-cell-center"><input type="datetime-local" class="crm-inline-input crm-datetime-input" data-scheduled-input="${a.id}" value="${(a.scheduledAt || '').slice(0, 16)}"></td>
+      <td class="crm-cell-center">
+        <select class="deal-stage-select" data-stage="${currentStage}" data-set-stage="${a.id}">
+          <option value="" ${!currentStage ? 'selected' : ''}>— Da impostare —</option>
+          ${stageOptionsHtml}
+        </select>
+      </td>
+      <td><input type="number" min="0" step="1" class="assigned-edit-input" data-cash-input="${a.id}" value="${a.cashCollected || 0}" style="width:90px;"></td>
+      <td class="crm-cell-center"><button class="crm-amount-link" data-open-installments="${a.id}">€${round2(totalSold)}</button></td>
+      <td class="vnd-actions-cell">
+        <button class="vnd-note-btn ${noteCount ? 'has-notes' : ''}" data-open-notes="${a.id}">Note ${noteCount ? `(${noteCount})` : ''}</button>
+        <button class="vnd-followup-btn ${a.nextFollowUpDate ? 'has-date' : ''}" data-open-followup="${a.id}" title="Data prossimo follow-up">📅 ${followUpLabel}</button>
+      </td>
+      <td class="crm-row-actions"><button class="crm-row-del" data-del-appt-vnd="${a.id}" title="Elimina">×</button></td>
+    </tr>`;
+}
+
+function wireVenditoreAppuntamentiEvents() {
+  wireSubTabsBar('venditore');
+  appRoot.querySelectorAll('[data-crm-vnd-filter]').forEach(btn => {
+    btn.addEventListener('click', () => { uiState.crmVenditoreFilter = btn.dataset.crmVndFilter; renderVenditoreAppuntamenti(); });
+  });
+  document.getElementById('btnNewApptVnd').addEventListener('click', () => addBlankAppointmentRow('venditore'));
+  document.getElementById('btnApptReportVnd').addEventListener('click', generateVenditoreAppointmentsReport);
+  document.getElementById('btnApptCalendarVnd').addEventListener('click', () => openAppointmentsCalendarModal('venditore'));
+
+  appRoot.querySelectorAll('[data-name-input]').forEach(input => {
+    input.addEventListener('change', () => {
+      const apt = db.appointments.find(x => x.id === input.dataset.nameInput);
+      if (!apt) return;
+      apt.clientName = input.value;
+      persist();
+    });
+  });
+
+  appRoot.querySelectorAll('[data-phone-input]').forEach(input => {
+    input.addEventListener('change', () => {
+      const apt = db.appointments.find(x => x.id === input.dataset.phoneInput);
+      if (!apt) return;
+      apt.phone = input.value || null;
+      persist();
+    });
+  });
+
+  appRoot.querySelectorAll('[data-copy-phone]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const apt = db.appointments.find(x => x.id === btn.dataset.copyPhone);
+      if (!apt || !apt.phone) { showToast('Nessun numero da copiare.', true); return; }
+      const ok = await copyToClipboard(apt.phone);
+      showToast(ok ? 'Numero copiato.' : 'Seleziona e copia manualmente.', !ok);
+    });
+  });
+
+  appRoot.querySelectorAll('[data-scheduled-input]').forEach(input => {
+    input.addEventListener('change', () => {
+      const apt = db.appointments.find(x => x.id === input.dataset.scheduledInput);
+      if (!apt || !input.value) return;
+      apt.scheduledAt = input.value;
+      persist();
+      renderVenditoreAppuntamenti();
+    });
+  });
+
+  appRoot.querySelectorAll('[data-set-stage]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const apt = db.appointments.find(x => x.id === sel.dataset.setStage);
+      if (!apt) return;
+      applyDealStage(apt, sel.value || null);
+      renderVenditoreAppuntamenti();
+    });
+  });
+
+  appRoot.querySelectorAll('[data-cash-input]').forEach(input => {
+    input.addEventListener('change', () => {
+      const apt = db.appointments.find(x => x.id === input.dataset.cashInput);
+      if (!apt) return;
+      const prevCommission = apt.closed ? commissionEventsForAppointment(apt).filter(e => e.id === apt.id + '_deposit').reduce((s, e) => s + e.amount, 0) : 0;
+      apt.cashCollected = Math.max(0, parseFloat(input.value) || 0);
+      persist();
+      if (apt.closed && db.settings.toggles.liveTicker) {
+        const newCommission = commissionEventsForAppointment(apt).filter(e => e.id === apt.id + '_deposit').reduce((s, e) => s + e.amount, 0);
+        if (newCommission > prevCommission) showCommissionTicker(newCommission - prevCommission);
+      }
+      renderVenditoreAppuntamenti();
+    });
+  });
+
+  appRoot.querySelectorAll('[data-open-installments]').forEach(btn => {
+    btn.addEventListener('click', () => openInstallmentsModal(btn.dataset.openInstallments, 'venditore'));
+  });
+
+  appRoot.querySelectorAll('[data-open-notes]').forEach(btn => {
+    btn.addEventListener('click', () => openNotesModal(btn.dataset.openNotes));
+  });
+
+  appRoot.querySelectorAll('[data-open-followup]').forEach(btn => {
+    btn.addEventListener('click', () => openFollowUpModal(btn.dataset.openFollowup));
+  });
+
+  appRoot.querySelectorAll('[data-del-appt-vnd]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const apt = db.appointments.find(x => x.id === btn.dataset.delApptVnd);
+      if (!apt) return;
+      showConfirm(`Eliminare l'appuntamento di "${apt.clientName || '(senza nome)'}"?`, () => {
+        db.appointments = db.appointments.filter(x => x.id !== apt.id);
+        persist();
+        renderVenditoreAppuntamenti();
+      }, { confirmLabel: 'Elimina' });
+    });
+  });
+
+  wireCallRecordingsEvents();
+}
+
+/* ---------- Note appuntamento (solo Venditore) ---------- */
+
+function openNotesModal(apptId) {
+  const apt = db.appointments.find(x => x.id === apptId);
+  if (!apt) return;
+  renderNotesModal(apt);
+}
+
+function renderNotesModal(apt) {
+  const notes = [...(apt.notes || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const notesHtml = notes.length ? notes.map(n => `
+    <div class="note-card">
+      <div class="note-card-text">${escapeHtml(n.text)}</div>
+      <div class="note-card-meta">${fmtDateTime(n.createdAt)}</div>
+    </div>`).join('') : '<p class="text-dim">Nessuna nota ancora.</p>';
+
+  openModal(`
+    <h3>Note — ${escapeHtml(apt.clientName || '(senza nome)')}</h3>
+    <div class="note-add-row">
+      <textarea id="newNoteText" placeholder="Scrivi una nota su questo lead…"></textarea>
+      <button class="btn-primary" id="btnAddNote" style="align-self:flex-end;">+ Aggiungi nota</button>
+    </div>
+    <div class="notes-list">${notesHtml}</div>
+    <div class="modal-actions">
+      <button class="btn-ghost" data-close-modal="1">Chiudi</button>
+    </div>
+  `);
+  modalRoot.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', () => { closeModal(); renderVenditoreAppuntamenti(); }));
+
+  document.getElementById('btnAddNote').addEventListener('click', () => {
+    const ta = document.getElementById('newNoteText');
+    const text = ta.value.trim();
+    if (!text) { ta.focus(); return; }
+    apt.notes = apt.notes || [];
+    apt.notes.push({ id: uid('nota'), text, createdAt: new Date().toISOString() });
+    persist();
+    renderNotesModal(apt);
+  });
+}
+
+/* ---------- Data prossimo follow-up (solo Venditore) ---------- */
+
+function openFollowUpModal(apptId) {
+  const apt = db.appointments.find(x => x.id === apptId);
+  if (!apt) return;
+  openModal(`
+    <h3>Prossimo follow-up — ${escapeHtml(apt.clientName || '(senza nome)')}</h3>
+    <label class="field">
+      Data da ricontattare
+      <input type="date" id="followUpDateInput" value="${apt.nextFollowUpDate || ''}">
+    </label>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn-ghost" id="btnClearFollowUp">Rimuovi data</button>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-ghost" data-close-modal="1">Annulla</button>
+        <button class="btn-primary" id="btnSaveFollowUp">Salva</button>
+      </div>
+    </div>
+  `);
+  modalRoot.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', closeModal));
+  document.getElementById('btnClearFollowUp').addEventListener('click', () => {
+    apt.nextFollowUpDate = null;
+    persist();
+    closeModal();
+    renderVenditoreAppuntamenti();
+  });
+  document.getElementById('btnSaveFollowUp').addEventListener('click', () => {
+    const val = document.getElementById('followUpDateInput').value;
+    apt.nextFollowUpDate = val || null;
+    persist();
+    closeModal();
+    renderVenditoreAppuntamenti();
+  });
+}
+
+/* ---------- Registrazione Call (link Drive/Fathom/ecc., solo Venditore) ---------- */
+
+/**
+ * Widget "Registrazione Call": ancorato in fondo a destra (fixed, sopra il resto del
+ * contenuto) invece che come card a piena larghezza, come richiesto esplicitamente
+ * dall'utente ("in fondo a destra"). Si apre/chiude con un toggle per non ingombrare
+ * la vista sulla tabella appuntamenti; lo stato aperto/chiuso è tenuto in uiState
+ * (non persistito: si riapre chiuso ad ogni refresh, comportamento voluto per un widget
+ * di utilità secondaria).
+ */
+function renderCallRecordingsSection() {
+  const recs = [...(db.callRecordings || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const rowsHtml = recs.length ? recs.map(r => `
+    <div class="call-rec-row">
+      <a href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.label || r.url)}</a>
+      <button class="crm-row-del" data-del-rec="${r.id}" title="Elimina">×</button>
+    </div>`).join('') : '<p class="text-dim">Nessuna registrazione ancora.</p>';
+
+  const open = !!uiState.callRecOpen;
+
+  return `
+    <div class="call-rec-widget ${open ? 'is-open' : ''}">
+      <button class="call-rec-toggle" id="btnToggleRec">
+        <span>🎙️ Registrazione Call</span>
+        <span class="call-rec-count">${recs.length}</span>
+      </button>
+      <div class="call-rec-panel" ${open ? '' : 'hidden'}>
+        <p class="text-dim" style="font-size:0.78rem;">Incolla qui i link alle registrazioni delle call (Drive, Fathom, ecc.).</p>
+        <div class="call-rec-list">${rowsHtml}</div>
+        <div class="call-rec-add-row">
+          <input type="text" id="newRecLabel" placeholder="Etichetta (es. nome cliente)">
+          <input type="text" id="newRecUrl" placeholder="https://…">
+          <button class="btn-ghost" id="btnAddRec">+ Aggiungi link</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function wireCallRecordingsEvents() {
+  const btnToggle = document.getElementById('btnToggleRec');
+  if (btnToggle) {
+    btnToggle.addEventListener('click', () => {
+      uiState.callRecOpen = !uiState.callRecOpen;
+      renderVenditoreAppuntamenti();
+    });
+  }
+  const btnAdd = document.getElementById('btnAddRec');
+  if (btnAdd) {
+    btnAdd.addEventListener('click', () => {
+      const labelInput = document.getElementById('newRecLabel');
+      const urlInput = document.getElementById('newRecUrl');
+      const url = urlInput.value.trim();
+      if (!url) { urlInput.focus(); return; }
+      db.callRecordings = db.callRecordings || [];
+      db.callRecordings.push({ id: uid('rec'), label: labelInput.value.trim(), url, createdAt: new Date().toISOString() });
+      persist();
+      uiState.callRecOpen = true;
+      renderVenditoreAppuntamenti();
+    });
+  }
+  appRoot.querySelectorAll('[data-del-rec]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      db.callRecordings = (db.callRecordings || []).filter(r => r.id !== btn.dataset.delRec);
+      persist();
+      uiState.callRecOpen = true;
+      renderVenditoreAppuntamenti();
+    });
+  });
+}
+
+/* ---------- Popup rate (installments) ---------- */
+
+function openInstallmentsModal(apptId, role) {
+  const apt = db.appointments.find(x => x.id === apptId);
+  if (!apt) return;
+  renderInstallmentsModal(apt, role);
+}
+
+function renderInstallmentsModal(apt, role) {
+  const returnToRoleScreen = () => { if (role === 'venditore') renderVenditoreAppuntamenti(); else renderAppuntamenti(); };
+  // Rata sintetica "Acconto" (dal cash collected, vedi getEffectiveInstallments):
+  // mostrata per prima, bloccata (non cancellabile, importo non editabile qui — si
+  // modifica dal campo Cash Collected nella riga della tabella) così l'utente vede
+  // subito quanto è già stato incassato e aggiunge solo l'importo MANCANTE come rate.
+  const depositRowHtml = (apt.cashCollected && apt.cashCollected > 0) ? `
+    <div class="installment-row installment-row-deposit">
+      <span class="installment-deposit-label">Acconto (cash collected)</span>
+      <span class="installment-deposit-amount">€${round2(apt.cashCollected)}</span>
+      <span class="text-dim" style="font-size:0.72rem;">già incassato</span>
+      <span class="badge badge-yes">pagata</span>
+      <span></span>
+      <span class="text-dim" style="font-size:0.72rem;" title="Modifica dal campo Cash Collected nella tabella">🔒</span>
+    </div>` : '';
+
   const rowsHtml = (apt.installments || []).map(inst => `
     <div class="installment-row" data-inst-row="${inst.id}">
       <input type="text" data-inst-field="label" value="${escapeHtml(inst.label || '')}" placeholder="Es. Rata 2">
@@ -1434,15 +2194,15 @@ function renderInstallmentsModal(apt) {
 
   openModal(`
     <h3>Rate — ${escapeHtml(apt.clientName || '(senza nome)')}</h3>
-    <p class="text-dim" style="font-size:0.8rem;">Ogni rata è editabile in qualunque momento (importo, data, se pagata e quando) per gestire eventuali ritardi.</p>
-    <div class="installments-list" id="instList">${rowsHtml || '<p class="text-dim">Nessuna rata aggiunta ancora.</p>'}</div>
+    <p class="text-dim" style="font-size:0.8rem;">Il cash collected è già conteggiato come acconto (prima riga, bloccata). Aggiungi qui solo l'importo MANCANTE rispetto al totale venduto reale.</p>
+    <div class="installments-list" id="instList">${depositRowHtml}${rowsHtml || (depositRowHtml ? '' : '<p class="text-dim">Nessuna rata aggiunta ancora.</p>')}</div>
     <button class="btn-ghost" id="btnAddInstallment">+ Aggiungi rata</button>
-    <div class="installment-total-row"><span>Totale rate</span><span>€${round2(total)}</span></div>
+    <div class="installment-total-row"><span>Totale (acconto + rate)</span><span>€${round2(total)}</span></div>
     <div class="modal-actions">
       <button class="btn-primary" data-close-modal="1">Chiudi</button>
     </div>
   `);
-  modalRoot.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', () => { closeModal(); renderAppuntamenti(); }));
+  modalRoot.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', () => { closeModal(); returnToRoleScreen(); }));
 
   document.getElementById('btnAddInstallment').addEventListener('click', () => {
     apt.installments = apt.installments || [];
@@ -1499,10 +2259,91 @@ function renderInstallmentsModal(apt) {
 }
 
 /* ============================================================================
+ * Statistiche Venditore — conversion rate, show rate, scontrino medio, su diversi
+ * timeframe e all time (richiesto esplicitamente dall'utente, sullo stile delle
+ * statistiche già mostrate per le sessioni Setter).
+ * ==========================================================================*/
+
+const VND_STATS_TIMEFRAMES = ['oggi', '7g', 'mese_corrente', 'all', 'custom'];
+const VND_STATS_TIMEFRAME_LABELS = { oggi: 'Oggi', '7g': '7 giorni', mese_corrente: 'Mese corrente', all: 'All time', custom: 'Personalizzato' };
+
+function renderVenditoreStatistiche() {
+  uiState.venditoreTab = 'statistiche';
+  const tf = uiState.vndStatsTimeframe || 'mese_corrente';
+  const range = tf === 'all' ? null : (tf === 'custom' ? getTimeframeRange('custom', uiState.vndStatsCustomFrom, uiState.vndStatsCustomTo) : getTimeframeRange(tf));
+  const stats = computeVenditoreStats(db, range);
+
+  const tabsHtml = VND_STATS_TIMEFRAMES.map(k =>
+    `<button class="pill ${tf === k ? 'active' : ''}" data-vnd-stats-tf="${k}">${VND_STATS_TIMEFRAME_LABELS[k]}</button>`
+  ).join('');
+
+  appRoot.innerHTML = `
+    ${renderSubTabsBar('venditore', 'statistiche')}
+    <section class="card">
+      <div class="vnd-timeframe-tabs">${tabsHtml}</div>
+      ${tf === 'custom' ? `
+      <div class="custom-range" style="margin-top:8px;">
+        <label>dal <input type="date" id="vndStatsFrom" value="${uiState.vndStatsCustomFrom ? uiState.vndStatsCustomFrom : dateInputValue(range.start)}"></label>
+        <label>al <input type="date" id="vndStatsTo" value="${uiState.vndStatsCustomTo ? uiState.vndStatsCustomTo : dateInputValue(range.end)}"></label>
+        <button class="btn-ghost" id="btnVndStatsApplyRange">Applica</button>
+      </div>` : ''}
+      <p class="text-dim" style="font-size:0.82rem;">${tf === 'all' ? 'Tutto lo storico registrato.' : (tf === 'custom' ? `Periodo: dal ${fmtDate(range.start)} al ${fmtDate(range.end)}.` : `Periodo: ${TIMEFRAME_LABELS[tf] || tf}.`)}</p>
+    </section>
+
+    <section class="vnd-stats-grid">
+      <div class="card kpi-card"><div class="kpi-value">${stats.assegnati}</div><div class="kpi-label">Assegnati</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.presentati}</div><div class="kpi-label">Presentati</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.chiusi}</div><div class="kpi-label">Chiusi</div></div>
+      <div class="card kpi-card accented"><div class="kpi-value">€${round2(stats.commissioniTot)}</div><div class="kpi-label">Commissioni</div></div>
+    </section>
+
+    <section class="vnd-stats-grid">
+      <div class="card kpi-card"><div class="kpi-value">${stats.showRate}%</div><div class="kpi-label">Show Rate</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.conversionRate}%</div><div class="kpi-label">Conversion Rate</div></div>
+      <div class="card kpi-card"><div class="kpi-value">€${round2(stats.scontrinoMedio)}</div><div class="kpi-label">Scontrino Medio</div></div>
+      <div class="card kpi-card"><div class="kpi-value">€${round2(stats.totalVenduto)}</div><div class="kpi-label">Totale Venduto</div></div>
+    </section>
+
+    <section class="card">
+      <h3>Esiti nel periodo</h3>
+      <div class="bar-list">
+        <div class="bar-row"><div class="bar-label">Presentati</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.presentati, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.presentati}</div></div>
+        <div class="bar-row"><div class="bar-label">Chiusi</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.chiusi, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.chiusi}</div></div>
+        <div class="bar-row"><div class="bar-label">Persi</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.persi, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.persi}</div></div>
+        <div class="bar-row"><div class="bar-label">No Show</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.noShow, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.noShow}</div></div>
+        <div class="bar-row"><div class="bar-label">Annullati</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.annullati, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.annullati}</div></div>
+      </div>
+    </section>
+  `;
+
+  wireSubTabsBar('venditore');
+  appRoot.querySelectorAll('[data-vnd-stats-tf]').forEach(btn => {
+    btn.addEventListener('click', () => { uiState.vndStatsTimeframe = btn.dataset.vndStatsTf; renderVenditoreStatistiche(); });
+  });
+  const btnApplyRange = document.getElementById('btnVndStatsApplyRange');
+  if (btnApplyRange) {
+    btnApplyRange.addEventListener('click', () => {
+      const from = document.getElementById('vndStatsFrom').value;
+      const to = document.getElementById('vndStatsTo').value;
+      if (!from || !to) return;
+      uiState.vndStatsCustomFrom = from;
+      uiState.vndStatsCustomTo = to;
+      renderVenditoreStatistiche();
+    });
+  }
+}
+
+/* ============================================================================
  * Commissioni — calendario mensile
  * ==========================================================================*/
 
-function renderCommissioni() {
+/**
+ * Calendario Commissioni — SPOSTATO in fondo alla Dashboard su richiesta esplicita
+ * dell'utente (prima era una pagina a sé, route 'commissioni'). Stessa identica logica
+ * di prima (riepilogo mese + griglia calendario), solo restituita come HTML da inserire
+ * in coda a renderDashboard invece di occupare da sola tutto appRoot.
+ */
+function renderCommissioniCalendarSection() {
   const now = new Date();
   const viewDate = new Date(now.getFullYear(), now.getMonth() + uiState.calMonthOffset, 1);
   const monthRange = { start: startOfMonth(viewDate), end: endOfMonth(viewDate) };
@@ -1535,7 +2376,8 @@ function renderCommissioni() {
       </div>`;
   }
 
-  appRoot.innerHTML = `
+  return `
+    <div class="section-separator"><span class="eyebrow">Calendario Commissioni</span></div>
     <section class="card">
       <h2>Commissioni — riepilogo mese</h2>
       <div class="comm-summary-grid kpi-grid">
@@ -1557,12 +2399,130 @@ function renderCommissioni() {
       </div>
     </section>
   `;
+}
 
-  document.getElementById('calPrev').addEventListener('click', () => { uiState.calMonthOffset -= 1; renderCommissioni(); });
-  document.getElementById('calNext').addEventListener('click', () => { uiState.calMonthOffset += 1; renderCommissioni(); });
+function wireCommissioniCalendarSection() {
+  const now = new Date();
+  const viewDate = new Date(now.getFullYear(), now.getMonth() + uiState.calMonthOffset, 1);
+  const monthRange = { start: startOfMonth(viewDate), end: endOfMonth(viewDate) };
+  const summary = computeCommissionSummary(db, monthRange);
+  const byDay = groupEventsByDay(summary.events);
+
+  document.getElementById('calPrev').addEventListener('click', () => { uiState.calMonthOffset -= 1; renderDashboard(); });
+  document.getElementById('calNext').addEventListener('click', () => { uiState.calMonthOffset += 1; renderDashboard(); });
   appRoot.querySelectorAll('[data-cal-day]').forEach(cell => {
     cell.addEventListener('click', () => openCommissionDayModal(cell.dataset.calDay, byDay[cell.dataset.calDay] || []));
   });
+}
+
+/* ============================================================================
+ * Calendario Appuntamenti (Setter e Venditore) — modal con vista mensile, aperta dal
+ * bottone "📅 Calendario" nelle rispettive schermate Appuntamenti. Ogni giorno mostra gli
+ * appuntamenti con quella scheduledAt come mini-pillole colorate: per il Setter in base a
+ * presentedStatus (stessa idea del semaforo No/Confermato24h/Presentato/No Show già usato
+ * nei chip della tabella), per il Venditore riusando esattamente i colori DEAL_STAGES già
+ * definiti per il menu a tendina "stato trattativa" (var CSS --stage-*), così il colore è
+ * coerente in tutto il tool invece di inventarne uno nuovo solo per il calendario.
+ */
+const SETTER_PRESENTED_COLOR_CLASS = {
+  no: 'cal-appt-neutral',
+  confirmed24h: 'cal-appt-confirmed',
+  presented: 'cal-appt-presented',
+  no_show: 'cal-appt-noshow'
+};
+const SETTER_PRESENTED_LABEL = { no: 'No', confirmed24h: 'Confermato24h', presented: 'Presentato', no_show: 'No Show' };
+
+let calModalRole = 'setter';
+let calModalMonthOffset = 0;
+
+function openAppointmentsCalendarModal(role) {
+  calModalRole = role;
+  calModalMonthOffset = 0;
+  openModal(renderAppointmentsCalendarModalBody());
+  wireAppointmentsCalendarModal();
+}
+
+function renderAppointmentsCalendarModalBody() {
+  const now = new Date();
+  const viewDate = new Date(now.getFullYear(), now.getMonth() + calModalMonthOffset, 1);
+  const monthRange = { start: startOfMonth(viewDate), end: endOfMonth(viewDate) };
+
+  const rows = db.appointments.filter(a => a.role === calModalRole && a.scheduledAt && inRange(a.scheduledAt, monthRange));
+  const byDay = {};
+  rows.forEach(a => {
+    const key = dateInputValue(a.scheduledAt);
+    if (!byDay[key]) byDay[key] = [];
+    byDay[key].push(a);
+  });
+
+  const firstOfMonth = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
+  const firstWeekday = (firstOfMonth.getDay() + 6) % 7;
+  const daysInMonth = endOfMonth(viewDate).getDate();
+  const todayKey = dateInputValue(now);
+  const dowLabels = ['LUN', 'MAR', 'MER', 'GIO', 'VEN', 'SAB', 'DOM'];
+
+  let cells = '';
+  for (let i = 0; i < firstWeekday; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const cellDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
+    const key = dateInputValue(cellDate);
+    const dayAppts = byDay[key] || [];
+    const classes = ['cal-cell'];
+    if (dayAppts.length) classes.push('has-events');
+    if (key === todayKey) classes.push('today');
+
+    const pillsHtml = dayAppts.slice(0, 4).map(a => {
+      if (calModalRole === 'venditore') {
+        const stage = a.dealStage || '';
+        const label = stage && dealStageDef(stage) ? dealStageDef(stage).label : '—';
+        return `<div class="cal-appt-pill deal-stage-select" data-stage="${stage}" title="${escapeHtml(a.clientName || '')}">${escapeHtml(a.clientName || '(senza nome)')}</div>`;
+      }
+      const cls = SETTER_PRESENTED_COLOR_CLASS[a.presentedStatus] || 'cal-appt-neutral';
+      return `<div class="cal-appt-pill ${cls}" title="${escapeHtml(a.clientName || '')}">${escapeHtml(a.clientName || '(senza nome)')}</div>`;
+    }).join('');
+    const moreHtml = dayAppts.length > 4 ? `<div class="cal-appt-more">+${dayAppts.length - 4}</div>` : '';
+
+    cells += `
+      <div class="${classes.join(' ')}">
+        <div class="cal-daynum">${day}</div>
+        <div class="cal-appt-pills">${pillsHtml}${moreHtml}</div>
+      </div>`;
+  }
+
+  const legendHtml = calModalRole === 'venditore'
+    ? DEAL_STAGES.map(s => `<span class="cal-legend-item deal-stage-select" data-stage="${s.key}">${escapeHtml(s.label)}</span>`).join('')
+    : Object.entries(SETTER_PRESENTED_LABEL).map(([key, label]) => `<span class="cal-legend-item ${SETTER_PRESENTED_COLOR_CLASS[key]}">${escapeHtml(label)}</span>`).join('');
+
+  return `
+    <h3>Calendario Appuntamenti — ${calModalRole === 'venditore' ? 'Venditore' : 'Setter'}</h3>
+    <div class="cal-nav">
+      <button id="calModalPrev">← Mese prec.</button>
+      <div class="cal-month-label">${viewDate.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' })}</div>
+      <button id="calModalNext">Mese succ. →</button>
+    </div>
+    <div class="cal-grid">
+      ${dowLabels.map(d => `<div class="cal-dow">${d}</div>`).join('')}
+      ${cells}
+    </div>
+    <div class="cal-legend">${legendHtml}</div>
+    <div class="modal-actions">
+      <button class="btn-primary" data-close-modal="1">Chiudi</button>
+    </div>
+  `;
+}
+
+function wireAppointmentsCalendarModal() {
+  document.getElementById('calModalPrev').addEventListener('click', () => {
+    calModalMonthOffset -= 1;
+    modalRoot.querySelector('.modal-box').innerHTML = renderAppointmentsCalendarModalBody();
+    wireAppointmentsCalendarModal();
+  });
+  document.getElementById('calModalNext').addEventListener('click', () => {
+    calModalMonthOffset += 1;
+    modalRoot.querySelector('.modal-box').innerHTML = renderAppointmentsCalendarModalBody();
+    wireAppointmentsCalendarModal();
+  });
+  modalRoot.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', closeModal));
 }
 
 const COMMISSION_SOURCE_LABELS = { showup: 'presentati', setting: 'chiusura setting', vendita: 'chiusura closer' };
