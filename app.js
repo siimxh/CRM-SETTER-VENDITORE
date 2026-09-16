@@ -755,6 +755,8 @@ function wireDashboardTopSectionEvents() {
       renderDashboard();
     });
   });
+
+  wireLineCharts(appRoot);
 }
 
 /* ============================================================================
@@ -776,8 +778,8 @@ function renderCommissionKpiSection() {
   const commSeries = buildAndamentoSeries(range, tf, 'commissioni', commRole);
   const venditoSeries = buildAndamentoSeries(range, tf, 'venduto', 'all');
 
-  const commChart = renderLineChart(commSeries, { color: commRole === 'setter' ? 'var(--setter-color)' : (commRole === 'venditore' ? 'var(--venditore-color)' : 'var(--accent)'), money: true });
-  const vendutoChart = renderLineChart(venditoSeries, { color: 'var(--accent)', money: true });
+  const commChart = renderLineChart(commSeries.values, commSeries.labels, { color: commRole === 'setter' ? 'var(--setter-color)' : (commRole === 'venditore' ? 'var(--venditore-color)' : 'var(--accent)'), money: true });
+  const vendutoChart = renderLineChart(venditoSeries.values, venditoSeries.labels, { color: 'var(--accent)', money: true });
 
   return `
     <div class="section-separator"><span class="eyebrow">Andamento generale</span></div>
@@ -862,7 +864,7 @@ function buildAndamentoSeries(range, timeframe, metric, role) {
     buckets.push({ start: bStart, end: bEnd });
   }
 
-  return buckets.map(b => {
+  const values = buckets.map(b => {
     if (metric === 'commissioni') {
       const events = commissionEventsInRange(db, b, role === 'all' ? undefined : role);
       return sumEvents(events);
@@ -870,35 +872,79 @@ function buildAndamentoSeries(range, timeframe, metric, role) {
     const closedAppts = (db.appointments || []).filter(a => a.closed && a.scheduledAt && inRange(a.scheduledAt, b));
     return round2(closedAppts.reduce((s, a) => s + apptTotalSold(a), 0));
   });
+  const labels = buckets.map(formatBucketLabel);
+
+  return { values, labels };
+}
+
+/** Etichetta leggibile di un bucket temporale per l'asse/tooltip dei grafici a linea:
+ * un giorno singolo ("16 set") se il bucket è ~1 giorno, altrimenti un range ("10–13 set")
+ * per i bucket aggregati (range molto ampi, dove buildAndamentoSeries usa ~30 bucket
+ * invece di uno per giorno). Così l'hover mostra sempre il "giorno/microperiodo" giusto,
+ * come richiesto esplicitamente dall'utente. */
+function formatBucketLabel(b) {
+  const fmtShort = (d) => new Date(d).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
+  if (dateInputValue(b.start) === dateInputValue(b.end)) return fmtShort(b.start);
+  return `${fmtShort(b.start)} – ${fmtShort(b.end)}`;
+}
+
+/**
+ * Tick "puliti" per l'asse Y in stile normale-grafico (0 / 500 / 1.000 / ...), invece di
+ * dividere il massimo in parti uguali senza senso. tickCount è indicativo: il numero
+ * finale di tick dipende da quale step "pulito" (1/2/5 × potenza di 10) copre il range.
+ */
+function niceTicks(maxVal, tickCount) {
+  if (maxVal <= 0) return [0, 1];
+  const rawStep = maxVal / tickCount;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const residual = rawStep / magnitude;
+  let niceResidual;
+  if (residual > 5) niceResidual = 10;
+  else if (residual > 2) niceResidual = 5;
+  else if (residual > 1) niceResidual = 2;
+  else niceResidual = 1;
+  const step = niceResidual * magnitude;
+  const niceMax = Math.ceil(maxVal / step) * step;
+  const ticks = [];
+  for (let v = 0; v <= niceMax + 1e-9; v += step) ticks.push(Math.round(v * 100) / 100);
+  return ticks;
 }
 
 /**
  * Grafico a linea SVG minimale (nessuna libreria esterna): stroke colorato + area
- * riempita con gradiente leggero sotto la linea, così il grafico è "un minimo colorato"
- * come richiesto esplicitamente dall'utente invece di una semplice linea monocroma.
+ * riempita con gradiente leggero sotto la linea. Oltre alla linea colorata, il grafico
+ * ha (su richiesta esplicita dell'utente):
+ * - un asse Y a sinistra con valori in euro puliti (0/500/1.000/...), "come un normale
+ *   grafico", invece di lasciare i valori solo nel footer;
+ * - un cursore (crosshair) che segue il mouse/tocco e si aggancia al punto più vicino,
+ *   con una mini-card che mostra il giorno/microperiodo e la commissione/importo esatti
+ *   di quel punto — vedi wireLineCharts per l'interazione.
+ * Il rendering usa un viewBox con lo STESSO rapporto d'aspetto del box CSS (via
+ * aspect-ratio), quindi niente preserveAspectRatio="none": cerchi e testo non si
+ * deformano più con la larghezza del contenitore.
  * opts.color accetta qualunque valore CSS valido (anche var(--...) del tema attivo).
  */
 let lineChartIdCounter = 0;
-function renderLineChart(series, opts) {
+let lineChartRegistry = {};
+function renderLineChart(series, labels, opts) {
   opts = opts || {};
   const color = opts.color || 'var(--accent)';
   const money = !!opts.money;
-  const w = 560, h = 160, padX = 8, padY = 14;
+  const w = 640, h = 220, padX = 10, padY = 14, axisW = 64;
+  const plotX0 = axisW, plotW = w - axisW - padX;
   const gradId = 'lcGrad' + (lineChartIdCounter++);
+  const chartId = 'lc' + lineChartIdCounter;
 
   if (!series.length || series.every(v => v === 0)) {
     return `<div class="chart-empty text-dim">Nessun dato nel periodo selezionato.</div>`;
   }
 
-  const maxVal = Math.max(1, ...series);
-  const minVal = 0; // i valori (commissioni/venduto) non sono mai negativi
+  const ticks = niceTicks(Math.max(...series), 4);
+  const domainMax = ticks[ticks.length - 1] || 1;
   const n = series.length;
-  const xStep = n > 1 ? (w - padX * 2) / (n - 1) : 0;
-  const points = series.map((v, i) => {
-    const x = padX + xStep * i;
-    const y = padY + (1 - (v - minVal) / (maxVal - minVal || 1)) * (h - padY * 2);
-    return [x, y];
-  });
+  const xStep = n > 1 ? plotW / (n - 1) : 0;
+  const yFor = (v) => padY + (1 - v / domainMax) * (h - padY * 2);
+  const points = series.map((v, i) => [plotX0 + xStep * i, yFor(v)]);
 
   const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
   const areaPath = linePath + ` L${points[n - 1][0].toFixed(1)},${(h - padY).toFixed(1)} L${points[0][0].toFixed(1)},${(h - padY).toFixed(1)} Z`;
@@ -907,24 +953,112 @@ function renderLineChart(series, opts) {
   const firstVal = series[0];
   const fmtVal = (v) => money ? `€${round2(v)}` : String(v);
 
+  const gridlinesHtml = ticks.map(t => {
+    const y = yFor(t).toFixed(1);
+    return `<line class="line-chart-grid" x1="${plotX0}" y1="${y}" x2="${(w - padX).toFixed(1)}" y2="${y}"/>`;
+  }).join('');
+  const axisLabelsHtml = ticks.map(t => {
+    const topPct = ((yFor(t) / h) * 100).toFixed(2);
+    return `<div class="line-chart-yaxis-tick" style="top:${topPct}%;">${fmtVal(t)}</div>`;
+  }).join('');
+
+  lineChartRegistry[chartId] = { points, values: series, labels: labels || [], color, money, w, h, padY };
+
   return `
-    <div class="line-chart-wrap">
-      <svg class="line-chart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
-            <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
-          </linearGradient>
-        </defs>
-        <path d="${areaPath}" fill="url(#${gradId})" stroke="none"/>
-        <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-        ${points.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="${color}"/>`).join('')}
-      </svg>
+    <div class="line-chart-wrap" data-chart-id="${chartId}">
+      <div class="line-chart-body">
+        <div class="line-chart-yaxis" style="width:${axisW}px;">${axisLabelsHtml}</div>
+        <div class="line-chart-plot-wrap" style="aspect-ratio:${(w - axisW)} / ${h};">
+          <svg class="line-chart-svg" viewBox="${plotX0} 0 ${w - plotX0} ${h}" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            ${gridlinesHtml}
+            <path d="${areaPath}" fill="url(#${gradId})" stroke="none"/>
+            <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+            ${points.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="${color}"/>`).join('')}
+            <line class="line-chart-crosshair" x1="0" y1="${padY}" x2="0" y2="${h - padY}" hidden/>
+            <circle class="line-chart-hoverdot" cx="0" cy="0" r="4.5" fill="${color}" hidden/>
+            <rect class="line-chart-hit" x="${plotX0}" y="0" width="${w - plotX0}" height="${h}" fill="transparent"/>
+          </svg>
+          <div class="line-chart-tooltip" hidden>
+            <div class="line-chart-tooltip-value"></div>
+            <div class="line-chart-tooltip-label"></div>
+          </div>
+        </div>
+      </div>
       <div class="line-chart-footer">
         <span class="text-dim">Inizio: ${fmtVal(firstVal)}</span>
         <span class="line-chart-last" style="color:${color};">Ultimo: ${fmtVal(lastVal)}</span>
       </div>
     </div>`;
+}
+
+/**
+ * Wiring del cursore/tooltip per ogni grafico a linea renderizzato in root (chiamare
+ * dopo aver inserito l'HTML nel DOM). Legge i dati dal registry popolato da
+ * renderLineChart (punti in coordinate SVG, valori e etichette periodo) invece di
+ * ricalcolarli o di serializzarli nell'HTML, più semplice ed evita problemi di escaping.
+ */
+function wireLineCharts(root) {
+  (root || appRoot).querySelectorAll('[data-chart-id]').forEach(wrap => {
+    const chart = lineChartRegistry[wrap.dataset.chartId];
+    if (!chart) return;
+    const svg = wrap.querySelector('.line-chart-svg');
+    const hit = wrap.querySelector('.line-chart-hit');
+    const crosshair = wrap.querySelector('.line-chart-crosshair');
+    const hoverDot = wrap.querySelector('.line-chart-hoverdot');
+    const tooltip = wrap.querySelector('.line-chart-tooltip');
+    const tooltipValue = tooltip ? tooltip.querySelector('.line-chart-tooltip-value') : null;
+    const tooltipLabel = tooltip ? tooltip.querySelector('.line-chart-tooltip-label') : null;
+    if (!svg || !hit || !crosshair || !hoverDot || !tooltip) return;
+
+    const fmtVal = (v) => chart.money ? `€${round2(v)}` : String(v);
+
+    function showAt(index) {
+      const p = chart.points[index];
+      if (!p) return;
+      crosshair.setAttribute('x1', p[0]); crosshair.setAttribute('x2', p[0]);
+      crosshair.removeAttribute('hidden');
+      hoverDot.setAttribute('cx', p[0]); hoverDot.setAttribute('cy', p[1]);
+      hoverDot.removeAttribute('hidden');
+
+      if (tooltipValue) tooltipValue.textContent = fmtVal(chart.values[index]);
+      if (tooltipLabel) tooltipLabel.textContent = chart.labels[index] || '';
+      const leftPct = (p[0] / chart.w) * 100;
+      const topPct = (p[1] / chart.h) * 100;
+      tooltip.style.top = topPct + '%';
+      if (leftPct < 20) { tooltip.style.left = leftPct + '%'; tooltip.style.transform = 'translate(0, -100%)'; }
+      else if (leftPct > 80) { tooltip.style.left = leftPct + '%'; tooltip.style.transform = 'translate(-100%, -100%)'; }
+      else { tooltip.style.left = leftPct + '%'; tooltip.style.transform = 'translate(-50%, -100%)'; }
+      tooltip.hidden = false;
+    }
+
+    function hide() {
+      crosshair.setAttribute('hidden', '');
+      hoverDot.setAttribute('hidden', '');
+      tooltip.hidden = true;
+    }
+
+    function handleMove(clientX) {
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width) return;
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      const viewBoxParts = svg.getAttribute('viewBox').split(' ').map(Number);
+      const xUser = viewBoxParts[0] + ratio * viewBoxParts[2];
+      let nearest = 0, best = Infinity;
+      chart.points.forEach((p, i) => { const d = Math.abs(p[0] - xUser); if (d < best) { best = d; nearest = i; } });
+      showAt(nearest);
+    }
+
+    hit.addEventListener('pointermove', (e) => handleMove(e.clientX));
+    hit.addEventListener('pointerdown', (e) => handleMove(e.clientX));
+    hit.addEventListener('pointerleave', hide);
+    hit.addEventListener('mouseleave', hide);
+  });
 }
 
 /* ---------- Ritmo di chiusura (toggle 9) ---------- */
