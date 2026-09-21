@@ -8,15 +8,20 @@ let uiState = {
   pipelineFilter: 'all',
   sessioniPipelineFilter: 'all',
   crmSetterFilter: 'all',      // 'all' | 'no_show' — tabella Appuntamenti Setter
+  crmSetterSearch: '',         // testo ricerca per nome/telefono — tabella Appuntamenti Setter
   crmVenditoreFilter: 'all',   // 'all' | 'trattativa' | 'no_show' | 'perso' — tabella Appuntamenti Venditore
+  crmVenditoreSearch: '',      // testo ricerca per nome/telefono — tabella Appuntamenti Venditore
   vndStatsTimeframe: 'mese_corrente', // timeframe attivo per la pagina Statistiche Venditore
   vndStatsCustomFrom: null,
   vndStatsCustomTo: null,
   calMonthOffset: 0,           // scostamento in mesi dal mese corrente, per la navigazione del calendario
   editingGoal: null,           // { role, timeframe, step } quando un target obiettivo è in modifica inline
   goalsTimeframe: 'month',     // timeframe attivo (day|week|month) per le card Obiettivi (stile Hero + Sparkline)
-  settingTab: 'appuntamenti',  // sotto-tab attiva dentro la sezione Setting: 'appuntamenti' | 'sessioni'
+  settingTab: 'appuntamenti',  // sotto-tab attiva dentro la sezione Setting: 'appuntamenti' | 'sessioni' | 'statistiche'
   venditoreTab: 'appuntamenti',// sotto-tab attiva dentro la sezione Venditore: 'appuntamenti' | 'statistiche'
+  settingStatsTimeframe: 'mese_corrente', // timeframe attivo per la pagina Statistiche Setting
+  settingStatsCustomFrom: null,
+  settingStatsCustomTo: null,
   andamentoTimeframe: 'mese_corrente', // timeframe dei grafici a linea "Andamento generale" in dashboard
   andamentoCustomFrom: null,
   andamentoCustomTo: null,
@@ -389,12 +394,16 @@ function isCashDay(dayTotal) {
 // (richiesto esplicitamente dall'utente: un solo "Setting" e un solo "Venditore" in nav,
 // con la scelta Appuntamenti/Sessioni (Setting) o Appuntamenti/Statistiche (Venditore)
 // fatta DENTRO la schermata tramite sotto-tab, non con più voci di nav separate).
-const SETTING_SUBROUTES = { appuntamenti: 'setting-appuntamenti', sessioni: 'sessioni' };
+const SETTING_SUBROUTES = { appuntamenti: 'setting-appuntamenti', sessioni: 'sessioni', statistiche: 'setting-statistiche' };
 const VENDITORE_SUBROUTES = { appuntamenti: 'venditore-appuntamenti', statistiche: 'venditore-statistiche' };
 
 function renderRoute() {
   if (db.activeSession) {
     renderSessioneAttiva();
+    return;
+  }
+  if (db.recoveryRoundActive) {
+    renderRecoveryRoundScreen();
     return;
   }
   document.body.classList.remove('in-session');
@@ -420,6 +429,7 @@ function renderRoute() {
   if (route === 'sessioni' && parts[1]) { uiState.settingTab = 'sessioni'; renderSessioneDetail(parts[1]); }
   else if (route === 'sessioni') { uiState.settingTab = 'sessioni'; renderSettingPage(); }
   else if (route === 'setting-appuntamenti') { uiState.settingTab = 'appuntamenti'; renderSettingPage(); }
+  else if (route === 'setting-statistiche') { uiState.settingTab = 'statistiche'; renderSettingPage(); }
   else if (route === 'setting') renderSettingPage();
   else if (route === 'venditore-appuntamenti') { uiState.venditoreTab = 'appuntamenti'; renderVenditorePage(); }
   else if (route === 'venditore-statistiche') { uiState.venditoreTab = 'statistiche'; renderVenditorePage(); }
@@ -443,6 +453,7 @@ function renderSubTabsBar(kind, active) {
         <div class="sub-tabs">
           <button class="tf-tab ${active === 'appuntamenti' ? 'active' : ''}" data-setting-tab="appuntamenti">Appuntamenti</button>
           <button class="tf-tab ${active === 'sessioni' ? 'active' : ''}" data-setting-tab="sessioni">Sessioni</button>
+          <button class="tf-tab ${active === 'statistiche' ? 'active' : ''}" data-setting-tab="statistiche">Statistiche</button>
         </div>
       </section>`;
   }
@@ -460,7 +471,8 @@ function wireSubTabsBar(kind) {
     appRoot.querySelectorAll('[data-setting-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
         uiState.settingTab = btn.dataset.settingTab;
-        location.hash = uiState.settingTab === 'sessioni' ? '#/sessioni' : '#/setting-appuntamenti';
+        location.hash = uiState.settingTab === 'sessioni' ? '#/sessioni'
+          : (uiState.settingTab === 'statistiche' ? '#/setting-statistiche' : '#/setting-appuntamenti');
       });
     });
   } else {
@@ -477,6 +489,7 @@ function wireSubTabsBar(kind) {
 function renderSettingPage() {
   const tab = uiState.settingTab || 'appuntamenti';
   if (tab === 'sessioni') renderSessioniList();
+  else if (tab === 'statistiche') renderSettingStatistiche();
   else renderAppuntamenti();
 }
 
@@ -1391,9 +1404,11 @@ function renderSessioniList() {
   }).join('') : '<p class="text-dim">Nessuna sessione registrata ancora. Inizia la prima!</p>';
 
   const activityHtml = renderCallActivitySection();
+  const recoveryEntryHtml = renderRecoveryRoundEntryCard();
 
   appRoot.innerHTML = `
     ${renderSubTabsBar('setting', 'sessioni')}
+    ${recoveryEntryHtml}
     ${activityHtml}
     <div class="section-separator"><span class="eyebrow">Elenco sessioni</span></div>
     <section class="card filters-bar">
@@ -1407,6 +1422,7 @@ function renderSessioniList() {
 
   wireSubTabsBar('setting');
   wireCallActivitySection();
+  wireRecoveryRoundEntryCard();
   document.getElementById('sessioniPipelineFilter').addEventListener('change', (e) => {
     uiState.sessioniPipelineFilter = e.target.value;
     renderSessioniList();
@@ -1610,6 +1626,332 @@ function renderSessioneDetail(id) {
 }
 
 /* ============================================================================
+ * Round Recupero No Show — sessione FISSA e non eliminabile (non è una pipeline
+ * editabile: vive del tutto fuori dal sistema db.pipelines/db.sessions), richiesta
+ * esplicitamente dall'utente per richiamare sistematicamente i lead che hanno fatto
+ * no-show sia lato Setting (presentedStatus) sia lato Venditore (dealStage).
+ *
+ * Ogni entry (db.recoveryRound) è agganciata al singolo APPUNTAMENTO sorgente che ha
+ * generato il no-show (sourceAppointmentId), non al nominativo in astratto: così
+ * "Rimuovi dal round" o la risoluzione con un nuovo appuntamento non impediscono a un
+ * futuro no-show sullo stesso nome di generare una entry NUOVA, con contatore e note
+ * azzerati — esattamente come richiesto ("se mai rifisso un lead con stessi dati,
+ * riappaia come nuovo").
+ *
+ * Algoritmo di estrazione (pickNextRecoveryLead) — CORRETTO dopo il secondo esempio
+ * esplicito dell'utente (lead1 chiamato 2 volte, poi entra un nuovo no-show con 0
+ * chiamate -> il nuovo ha priorità la prima volta; MA quando rientro nel round dopo
+ * quella prima chiamata, il tool NON deve "pareggiare" i contatori tenendo il lead
+ * nuovo in testa finché non raggiunge le 2 chiamate degli altri — la rotazione deve
+ * seguire SOLO l'ultima chiamata, non il numero di chiamate). Una prima versione qui
+ * isolava il gruppo con callCount più basso ad ogni estrazione: sbagliato, perché
+ * rimetteva sempre in testa lo stesso lead "indietro a chiamate" finché non pareggiava
+ * gli altri. L'algoritmo giusto è una pura rotazione per "meno recentemente chiamato",
+ * dove un lead mai chiamato (lastInteractionAt null) è per definizione il più
+ * "scaduto" di tutti e va sempre prima:
+ * 1. tra i lead ATTIVI, se ce n'è almeno uno MAI mostrato (lastInteractionAt null), la
+ *    scelta avviene CASUALMENTE tra questi (richiesto esplicitamente: l'ordine non deve
+ *    essere per data) — copre sia il primo giro sia un nuovo no-show che entra a metà
+ *    round, che così ottiene la priorità richiesta senza bisogno di guardare i contatori;
+ * 2. altrimenti (tutti già chiamati almeno una volta) si sceglie chi ha
+ *    lastInteractionAt più vecchio — rotazione "a turno" pura, i contatori (callCount)
+ *    NON entrano nel confronto e quindi non vengono mai "pareggiati" artificialmente.
+ */
+
+/**
+ * Aggiunge (o mantiene) un appuntamento come lead attivo nel Round Recupero No Show,
+ * quando viene marcato "No Show" — sia da Setting sia da Venditore. Non duplica se
+ * esiste già una entry ATTIVA per lo stesso appuntamento (es. click ripetuto).
+ */
+function addToRecoveryRound(apt, role) {
+  db.recoveryRound = db.recoveryRound || [];
+  const existingActive = db.recoveryRound.find(l => l.sourceAppointmentId === apt.id && l.status === 'active');
+  if (existingActive) return;
+  db.recoveryRound.push({
+    id: uid('recov'),
+    sourceAppointmentId: apt.id,
+    sourceRole: role, // 'setter' | 'venditore' — dove è avvenuto QUESTO no-show
+    clientName: apt.clientName || '',
+    phone: apt.phone || '',
+    status: 'active', // 'active' | 'resolved' (appuntamento rifissato) | 'removed' (tolto dal round)
+    callCount: 0,
+    lastInteractionAt: null,
+    createdAt: new Date().toISOString(),
+    notes: [],
+    resolvedAppointmentId: null
+  });
+}
+
+/**
+ * Disattiva silenziosamente l'eventuale entry ATTIVA collegata a un appuntamento quando
+ * il suo stato non è più "No Show" (es. l'utente corregge un click sbagliato) — non è
+ * un "Rimuovi dal round" esplicito dell'utente, quindi non passa per applyRecoveryOutcome.
+ */
+function deactivateRecoveryEntryForAppointment(apt) {
+  (db.recoveryRound || []).forEach(l => {
+    if (l.sourceAppointmentId === apt.id && l.status === 'active') l.status = 'removed';
+  });
+}
+
+/** Vedi commento algoritmo sopra la sezione. */
+function pickNextRecoveryLead() {
+  const active = (db.recoveryRound || []).filter(l => l.status === 'active');
+  if (!active.length) return null;
+  const neverShown = active.filter(l => !l.lastInteractionAt);
+  if (neverShown.length) return neverShown[Math.floor(Math.random() * neverShown.length)];
+  active.sort((a, b) => new Date(a.lastInteractionAt) - new Date(b.lastInteractionAt));
+  return active[0];
+}
+
+/** Card fissa in Setting > Sessioni: punto d'ingresso al round, sempre presente. */
+function renderRecoveryRoundEntryCard() {
+  const waiting = (db.recoveryRound || []).filter(l => l.status === 'active').length;
+  return `
+    <section class="card recov-entry-card">
+      <div class="recov-entry-info">
+        <h3>🔁 Round Recupero No Show</h3>
+        <p class="text-dim" style="font-size:0.84rem;">Richiama i lead che hanno fatto no-show (da Setting o da Venditore), un lead a caso alla volta, finché tutti non sono stati sentiti almeno una volta.</p>
+      </div>
+      <div class="recov-entry-action">
+        <div class="recov-entry-count">${waiting}</div>
+        <div class="recov-entry-count-label">da richiamare</div>
+        <button class="btn-primary" id="btnStartRecoveryRound">${waiting ? 'Inizia round' : 'Apri round'}</button>
+      </div>
+    </section>`;
+}
+
+function wireRecoveryRoundEntryCard() {
+  const btn = document.getElementById('btnStartRecoveryRound');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    db.recoveryRoundActive = true;
+    db.recoveryRoundCurrentLeadId = null;
+    persist();
+    renderRoute();
+  });
+}
+
+/**
+ * Schermata a schermo intero del round (stesso linguaggio visivo di renderSessioneAttiva:
+ * .session-screen/.session-topbar/.outcome-grid), presa in carico da renderRoute() finché
+ * db.recoveryRoundActive resta true — indipendente dall'hash, esattamente come il
+ * meccanismo di sessione di chiamata esistente (db.activeSession).
+ */
+function renderRecoveryRoundScreen() {
+  document.body.classList.add('in-session');
+  db.recoveryRound = db.recoveryRound || [];
+
+  let lead = db.recoveryRoundCurrentLeadId
+    ? db.recoveryRound.find(l => l.id === db.recoveryRoundCurrentLeadId && l.status === 'active')
+    : null;
+  if (!lead) {
+    lead = pickNextRecoveryLead();
+    db.recoveryRoundCurrentLeadId = lead ? lead.id : null;
+    persist();
+  }
+
+  if (!lead) {
+    appRoot.innerHTML = `
+      <div class="session-screen">
+        <div class="session-topbar">
+          <button id="btnExitRecoveryRound" class="btn-danger-ghost">■ Esci dal round</button>
+          <div class="session-pipeline-name">🔁 Round Recupero No Show</div>
+          <div></div>
+        </div>
+        <div class="card" style="text-align:center; padding:60px 20px;">
+          <h2>Nessun lead da recuperare 🎉</h2>
+          <p class="text-dim">Non ci sono No Show attivi al momento. Torna qui quando ne arriva uno nuovo.</p>
+        </div>
+      </div>`;
+    document.getElementById('btnExitRecoveryRound').addEventListener('click', exitRecoveryRound);
+    return;
+  }
+
+  const srcApt = db.appointments.find(a => a.id === lead.sourceAppointmentId);
+  const displayName = (srcApt && srcApt.clientName) || lead.clientName || '(senza nome)';
+  const displayPhone = (srcApt && srcApt.phone) || lead.phone || '';
+  const roleLabel = lead.sourceRole === 'venditore' ? 'No Show da Venditore' : 'No Show da Setting';
+
+  const notes = [...(lead.notes || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const notesHtml = notes.length ? notes.map(n => `
+    <div class="note-card">
+      <div class="note-card-text">${escapeHtml(n.text)}</div>
+      <div class="note-card-meta">${fmtDateTime(n.createdAt)}</div>
+    </div>`).join('') : '<p class="text-dim">Nessuna nota ancora su questo lead.</p>';
+
+  appRoot.innerHTML = `
+    <div class="session-screen">
+      <div class="session-topbar">
+        <button id="btnExitRecoveryRound" class="btn-danger-ghost">■ Esci dal round</button>
+        <div class="session-pipeline-name">🔁 Round Recupero No Show</div>
+        <div></div>
+      </div>
+
+      <div class="card recov-hero">
+        <span class="role-badge ${lead.sourceRole}">${roleLabel}</span>
+        <div class="recov-hero-name">${escapeHtml(displayName)}</div>
+        <div class="recov-hero-phone-row">
+          <span class="recov-hero-phone">${displayPhone ? escapeHtml(displayPhone) : 'Nessun numero salvato'}</span>
+          ${displayPhone ? `<button class="crm-copy-phone-btn" id="btnCopyRecovPhone" title="Copia numero">⧉</button>` : ''}
+        </div>
+        <div class="recov-hero-counter">Tentativi di recupero finora: <strong>${lead.callCount || 0}</strong></div>
+      </div>
+
+      <div class="card">
+        <h3>Note su questo lead</h3>
+        <div class="note-add-row">
+          <textarea id="recovNoteText" placeholder="Scrivi una nota (la rivedrai solo qui, la prossima volta che ricapita questo lead)…"></textarea>
+          <button class="btn-ghost" id="btnAddRecovNote" style="align-self:flex-end;">+ Aggiungi nota</button>
+        </div>
+        <div class="notes-list">${notesHtml}</div>
+      </div>
+
+      <div class="outcome-grid">
+        <button class="outcome-btn" data-recov-outcome="non_risposto">Non risposto<span class="outcome-btn-sub">dopo ~2 squilli, passa al prossimo</span></button>
+        <button class="outcome-btn" data-recov-outcome="non_interessato">Non più interessato</button>
+        <button class="outcome-btn" data-recov-outcome="da_richiamare">Da richiamare</button>
+        <button class="outcome-btn" data-recov-outcome="appuntamento_fissato">Appuntamento fissato</button>
+        <button class="outcome-btn" data-recov-outcome="posticipato">Posticipato<span class="outcome-btn-sub">resta nel round, richiamato dopo</span></button>
+        <button class="outcome-btn outcome-btn-danger" data-recov-outcome="rimosso">Rimuovi dal round</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btnExitRecoveryRound').addEventListener('click', exitRecoveryRound);
+
+  const copyBtn = document.getElementById('btnCopyRecovPhone');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const ok = await copyToClipboard(displayPhone);
+      showToast(ok ? 'Numero copiato.' : 'Seleziona e copia manualmente.', !ok);
+    });
+  }
+
+  document.getElementById('btnAddRecovNote').addEventListener('click', () => {
+    const ta = document.getElementById('recovNoteText');
+    const text = ta.value.trim();
+    if (!text) { ta.focus(); return; }
+    lead.notes = lead.notes || [];
+    lead.notes.push({ id: uid('nota'), text, createdAt: new Date().toISOString() });
+    persist();
+    renderRecoveryRoundScreen();
+  });
+
+  appRoot.querySelectorAll('[data-recov-outcome]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const outcome = btn.dataset.recovOutcome;
+      if (outcome === 'appuntamento_fissato') { openRecoveryAppointmentModal(lead.id); return; }
+      if (outcome === 'rimosso') {
+        showConfirm(`Rimuovere "${displayName}" dal round di recupero? Se in futuro fissi un nuovo appuntamento con gli stessi dati e fa di nuovo no-show, riapparirà come lead nuovo.`, () => {
+          applyRecoveryOutcome(lead.id, 'rimosso');
+        }, { confirmLabel: 'Rimuovi dal round' });
+        return;
+      }
+      applyRecoveryOutcome(lead.id, outcome);
+    });
+  });
+}
+
+function exitRecoveryRound() {
+  db.recoveryRoundActive = false;
+  db.recoveryRoundCurrentLeadId = null;
+  persist();
+  document.body.classList.remove('in-session');
+  location.hash = '#/sessioni';
+  renderRoute();
+}
+
+/**
+ * Applica un esito al lead corrente e passa al prossimo (pickNextRecoveryLead sceglie
+ * di nuovo alla prossima renderRecoveryRoundScreen, azzerando recoveryRoundCurrentLeadId).
+ * - non_risposto / non_interessato / da_richiamare: sono vere chiamate effettuate ->
+ *   incrementano callCount e aggiornano lastInteractionAt (usato per la rotazione).
+ * - posticipato: l'utente ESPLICITAMENTE non chiama in questo momento -> callCount NON
+ *   incrementa (non è una chiamata reale), ma lastInteractionAt sì, altrimenti il lead
+ *   ricomparirebbe subito di nuovo (stesso callCount minimo, mai "toccato" prima) invece
+ *   di lasciare spazio agli altri prima di ripresentarsi.
+ * - rimosso: esce dal pool attivo, per qualunque motivo, finché non viene rifissato un
+ *   nuovo appuntamento con gli stessi dati (nuova entry, vedi addToRecoveryRound).
+ */
+function applyRecoveryOutcome(leadId, outcome) {
+  const lead = (db.recoveryRound || []).find(l => l.id === leadId);
+  if (!lead) return;
+  const now = new Date().toISOString();
+  if (outcome === 'non_risposto' || outcome === 'non_interessato' || outcome === 'da_richiamare') {
+    lead.callCount = (lead.callCount || 0) + 1;
+    lead.lastInteractionAt = now;
+  } else if (outcome === 'posticipato') {
+    lead.lastInteractionAt = now;
+  } else if (outcome === 'rimosso') {
+    lead.status = 'removed';
+    lead.lastInteractionAt = now;
+  }
+  db.recoveryRoundCurrentLeadId = null;
+  persist();
+  renderRecoveryRoundScreen();
+}
+
+/**
+ * "Appuntamento fissato" dal round: stessa dinamica di creazione già usata altrove
+ * (nome/telefono/data-ora), ma qui in un modal perché lo schermo del round non ha una
+ * tabella. L'appuntamento nasce SEMPRE in Setting (role:'setter'), anche se il no-show
+ * originale veniva da Venditore — richiesto esplicitamente dall'utente — con l'etichetta
+ * "Recuperato da no show" (vedi recoveredFromNoShow/recoveredFromRole e renderApptRow).
+ * Il lead viene marcato 'resolved' (esce dal pool attivo del round).
+ */
+function openRecoveryAppointmentModal(leadId) {
+  const lead = (db.recoveryRound || []).find(l => l.id === leadId);
+  if (!lead) return;
+  const srcApt = db.appointments.find(a => a.id === lead.sourceAppointmentId);
+  const prefillName = (srcApt && srcApt.clientName) || lead.clientName || '';
+  const prefillPhone = (srcApt && srcApt.phone) || lead.phone || '';
+  const nowLocal = new Date().toISOString().slice(0, 16);
+
+  openModal(`
+    <h3>Appuntamento fissato — recupero No Show</h3>
+    <p class="text-dim" style="font-size:0.85rem;">Va sempre in Setting, con l'etichetta "Recuperato da no show".</p>
+    <label class="field">Nome e cognome<input type="text" id="recovApptName" value="${escapeHtml(prefillName)}" placeholder="Nome e cognome"></label>
+    <label class="field">Telefono<input type="text" id="recovApptPhone" value="${escapeHtml(prefillPhone)}" placeholder="Telefono (facoltativo)"></label>
+    <label class="field">Data e ora appuntamento<input type="datetime-local" id="recovApptWhen" value="${nowLocal}"></label>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="recovApptCancelBtn">Annulla</button>
+      <button class="btn-primary" id="recovApptConfirmBtn">Salva</button>
+    </div>
+  `);
+
+  const nameInput = document.getElementById('recovApptName');
+  nameInput.focus();
+
+  document.getElementById('recovApptCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('recovApptConfirmBtn').addEventListener('click', () => {
+    const name = nameInput.value.trim();
+    const phone = document.getElementById('recovApptPhone').value.trim();
+    const when = document.getElementById('recovApptWhen').value;
+    if (!name) { showToast('Inserisci il nome dell\'appuntamento.', true); nameInput.focus(); return; }
+    if (!when) { showToast('Inserisci data e ora dell\'appuntamento.', true); return; }
+
+    const apt = newAppointment('setter');
+    apt.clientName = name;
+    apt.phone = phone || null;
+    apt.scheduledAt = when;
+    apt.recoveredFromNoShow = true;
+    apt.recoveredFromRole = lead.sourceRole;
+    db.appointments.unshift(apt);
+
+    lead.status = 'resolved';
+    lead.resolvedAppointmentId = apt.id;
+    lead.callCount = (lead.callCount || 0) + 1;
+    lead.lastInteractionAt = new Date().toISOString();
+
+    db.recoveryRoundCurrentLeadId = null;
+    persist();
+    closeModal();
+    showToast('Appuntamento aggiunto in Setting.');
+    renderRecoveryRoundScreen();
+  });
+}
+
+/* ============================================================================
  * Appuntamenti (mini-CRM) — sistema parallelo alle sessioni/pipeline di chiamata
  * outbound qui sopra. Non condivide dati con esse: solo la stessa app/topbar.
  * ==========================================================================*/
@@ -1644,7 +1986,9 @@ function newAppointment(role) {
     linkedAppointmentId: null,
     dealStage: null,          // solo Venditore — vedi DEAL_STAGES
     notes: [],                // solo Venditore — { id, text, author, createdAt }
-    nextFollowUpDate: null    // solo Venditore — YYYY-MM-DD (solo data, non ora)
+    nextFollowUpDate: null,   // solo Venditore — YYYY-MM-DD (solo data, non ora)
+    recoveredFromNoShow: false, // true se creato dal Round Recupero No Show
+    recoveredFromRole: null     // 'setter' | 'venditore' — ruolo in cui è avvenuto il no-show originale
   };
 }
 
@@ -1715,11 +2059,14 @@ function getEffectiveInstallments(apt) {
 function renderAppuntamenti() {
   uiState.settingTab = 'appuntamenti';
   const filter = uiState.crmSetterFilter || 'all'; // 'all' | 'no_show'
+  const search = uiState.crmSetterSearch || '';
   let rows = db.appointments.filter(a => a.role === 'setter');
   if (filter === 'no_show') rows = rows.filter(a => a.presentedStatus === 'no_show');
+  if (search.trim()) rows = rows.filter(a => matchesApptSearch(a, search));
   rows = [...rows].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
 
   const rowsHtml = rows.length ? rows.map(renderApptRow).join('') : '';
+  const noResults = search.trim() && !rows.length;
 
   appRoot.innerHTML = `
     ${renderSubTabsBar('setting', 'appuntamenti')}
@@ -1727,6 +2074,9 @@ function renderAppuntamenti() {
       <div class="crm-filters">
         <button class="pill ${filter === 'all' ? 'active' : ''}" data-crm-setter-filter="all">Tutti</button>
         <button class="pill ${filter === 'no_show' ? 'active' : ''}" data-crm-setter-filter="no_show">Solo No Show</button>
+      </div>
+      <div class="crm-search-wrap">
+        <input type="search" class="crm-search-input" id="crmSetterSearchInput" placeholder="Cerca per nome o telefono..." value="${escapeHtml(search)}">
       </div>
       <div style="display:flex; gap:8px;">
         <button class="btn-ghost" id="btnApptCalendar">📅 Calendario</button>
@@ -1744,11 +2094,52 @@ function renderAppuntamenti() {
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
-      </table>` : '<p class="text-dim">Nessun appuntamento ancora. Crea il primo con "+ Nuovo Appuntamento".</p>'}
+      </table>` : `<p class="text-dim">${noResults ? 'Nessun appuntamento trovato per questa ricerca.' : 'Nessun appuntamento ancora. Crea il primo con "+ Nuovo Appuntamento".'}</p>`}
     </section>
   `;
 
   wireAppuntamentiEvents();
+}
+
+/**
+ * Ricerca condivisa (Setter + Venditore): confronta il testo digitato con nome cliente
+ * e numero di telefono, case-insensitive e ignorando spazi/punteggiatura nel telefono
+ * cosi' che "333 123 4567" trovi anche "3331234567".
+ */
+function matchesApptSearch(a, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const name = (a.clientName || '').toLowerCase();
+  if (name.includes(q)) return true;
+  const phone = (a.phone || '').toLowerCase();
+  if (phone.includes(q)) return true;
+  const qDigits = q.replace(/\D/g, '');
+  if (qDigits) {
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phoneDigits.includes(qDigits)) return true;
+  }
+  return false;
+}
+
+/**
+ * Wiring condiviso per gli input di ricerca Setter/Venditore. Il re-render ad ogni
+ * digitazione sostituisce tutto il DOM (come le altre viste), quindi qui si salva
+ * posizione del cursore prima del render e la si ripristina subito dopo, cosi'
+ * l'utente puo' continuare a digitare senza perdere il focus sul campo.
+ */
+function wireCrmSearchInput(inputId, stateKey, renderFn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.addEventListener('input', () => {
+    uiState[stateKey] = input.value;
+    const cursorPos = input.selectionStart;
+    renderFn();
+    const newInput = document.getElementById(inputId);
+    if (newInput) {
+      newInput.focus();
+      newInput.setSelectionRange(cursorPos, cursorPos);
+    }
+  });
 }
 
 /**
@@ -1779,12 +2170,16 @@ function renderApptRow(a) {
 
   const totalSold = apptTotalSold(a);
   const linkNote = a.linkedAppointmentId ? `<div class="crm-link-note">collegato</div>` : '';
+  const recoveredBadge = a.recoveredFromNoShow
+    ? `<span class="badge recov-badge" title="Nato dal Round Recupero No Show (no-show originale da ${a.recoveredFromRole === 'venditore' ? 'Venditore' : 'Setting'})">↻ Recuperato da no show</span>`
+    : '';
 
   return `
     <tr data-appt-row="${a.id}">
       <td>
         <input type="text" class="crm-inline-input crm-name-input" data-name-input="${a.id}" value="${escapeHtml(a.clientName || '')}" placeholder="Nome e cognome">
         <input type="text" class="crm-inline-input crm-phone-input" data-phone-input="${a.id}" value="${escapeHtml(a.phone || '')}" placeholder="Telefono (facoltativo)">
+        ${recoveredBadge}
         ${linkNote}
       </td>
       <td class="crm-cell-center"><input type="datetime-local" class="crm-inline-input crm-datetime-input" data-scheduled-input="${a.id}" value="${(a.scheduledAt || '').slice(0, 16)}"></td>
@@ -1801,6 +2196,7 @@ function wireAppuntamentiEvents() {
   appRoot.querySelectorAll('[data-crm-setter-filter]').forEach(btn => {
     btn.addEventListener('click', () => { uiState.crmSetterFilter = btn.dataset.crmSetterFilter; renderAppuntamenti(); });
   });
+  wireCrmSearchInput('crmSetterSearchInput', 'crmSetterSearch', renderAppuntamenti);
   document.getElementById('btnNewAppt').addEventListener('click', () => {
     addBlankAppointmentRow('setter');
   });
@@ -1847,6 +2243,10 @@ function wireAppuntamentiEvents() {
       // prima (es. oggi 10, appuntamento del 6): le commissioni derivate (show-up,
       // cash collected) vanno segnate al 6, non al giorno del click.
       apt.presentedAt = val === 'presented' ? apt.scheduledAt : apt.presentedAt;
+      // No Show da Setting -> entra (o resta) nel Round Recupero No Show; qualunque altro
+      // stato disattiva l'eventuale entry attiva (es. click corretto per errore).
+      if (val === 'no_show') addToRecoveryRound(apt, 'setter');
+      else deactivateRecoveryEntryForAppointment(apt);
       persist();
       renderAppuntamenti();
     });
@@ -1958,6 +2358,10 @@ function applyDealStage(apt, stageKey) {
   apt.closed = !!(def && def.isClosed);
   if (apt.closed && !apt.closedAt) apt.closedAt = new Date().toISOString();
   if (!apt.closed) apt.closedAt = null;
+  // No Show da Venditore -> entra (o resta) nel Round Recupero No Show; qualunque altro
+  // stato disattiva l'eventuale entry attiva (es. correzione di un click sbagliato).
+  if (stageKey === 'no_show') addToRecoveryRound(apt, 'venditore');
+  else deactivateRecoveryEntryForAppointment(apt);
   persist();
 
   if (apt.closed && db.settings.toggles.closeSound) playCloseSound();
@@ -1971,11 +2375,14 @@ function applyDealStage(apt, stageKey) {
 function renderVenditoreAppuntamenti() {
   uiState.venditoreTab = 'appuntamenti';
   const filter = uiState.crmVenditoreFilter || 'all'; // 'all' | 'trattativa' | 'no_show' | 'perso'
+  const search = uiState.crmVenditoreSearch || '';
   let rows = db.appointments.filter(a => a.role === 'venditore');
   if (filter !== 'all') rows = rows.filter(a => a.dealStage === filter);
+  if (search.trim()) rows = rows.filter(a => matchesApptSearch(a, search));
   rows = [...rows].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
 
   const rowsHtml = rows.length ? rows.map(renderVenditoreApptRow).join('') : '';
+  const noResults = search.trim() && !rows.length;
 
   appRoot.innerHTML = `
     ${renderSubTabsBar('venditore', 'appuntamenti')}
@@ -1985,6 +2392,9 @@ function renderVenditoreAppuntamenti() {
         <button class="pill ${filter === 'trattativa' ? 'active' : ''}" data-crm-vnd-filter="trattativa">Trattativa</button>
         <button class="pill ${filter === 'no_show' ? 'active' : ''}" data-crm-vnd-filter="no_show">No Show</button>
         <button class="pill ${filter === 'perso' ? 'active' : ''}" data-crm-vnd-filter="perso">Perso</button>
+      </div>
+      <div class="crm-search-wrap">
+        <input type="search" class="crm-search-input" id="crmVenditoreSearchInput" placeholder="Cerca per nome o telefono..." value="${escapeHtml(search)}">
       </div>
       <div style="display:flex; gap:8px;">
         <button class="btn-ghost" id="btnApptCalendarVnd">📅 Calendario</button>
@@ -2003,7 +2413,7 @@ function renderVenditoreAppuntamenti() {
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
-        </table>` : '<p class="text-dim">Nessun appuntamento ancora. Crea il primo con "+ Nuovo Appuntamento".</p>'}
+        </table>` : `<p class="text-dim">${noResults ? 'Nessun appuntamento trovato per questa ricerca.' : 'Nessun appuntamento ancora. Crea il primo con "+ Nuovo Appuntamento".'}</p>`}
       </section>
     </div>
     ${renderCallRecordingsSection()}
@@ -2053,6 +2463,7 @@ function wireVenditoreAppuntamentiEvents() {
   appRoot.querySelectorAll('[data-crm-vnd-filter]').forEach(btn => {
     btn.addEventListener('click', () => { uiState.crmVenditoreFilter = btn.dataset.crmVndFilter; renderVenditoreAppuntamenti(); });
   });
+  wireCrmSearchInput('crmVenditoreSearchInput', 'crmVenditoreSearch', renderVenditoreAppuntamenti);
   document.getElementById('btnNewApptVnd').addEventListener('click', () => addBlankAppointmentRow('venditore'));
   document.getElementById('btnApptReportVnd').addEventListener('click', generateVenditoreAppointmentsReport);
   document.getElementById('btnApptCalendarVnd').addEventListener('click', () => openAppointmentsCalendarModal('venditore'));
@@ -2463,6 +2874,75 @@ function renderVenditoreStatistiche() {
       uiState.vndStatsCustomFrom = from;
       uiState.vndStatsCustomTo = to;
       renderVenditoreStatistiche();
+    });
+  }
+}
+
+/* ============================================================================
+ * Statistiche Setter (dentro Setting) — appuntamenti fissati/presentati, show up rate
+ * (sui soli appuntamenti già svolti), media fissati/giorno (feriali) e closing rate sui
+ * presentati. Richiesto esplicitamente dall'utente, stessi timeframe delle Statistiche
+ * Venditore. Vedi computeSetterStats in utils.js per le regole di calcolo.
+ * ==========================================================================*/
+
+const SETTING_STATS_TIMEFRAMES = ['oggi', '7g', 'mese_corrente', 'all', 'custom'];
+const SETTING_STATS_TIMEFRAME_LABELS = { oggi: 'Oggi', '7g': '7 giorni', mese_corrente: 'Mese corrente', all: 'All time', custom: 'Personalizzato' };
+
+function renderSettingStatistiche() {
+  uiState.settingTab = 'statistiche';
+  const tf = uiState.settingStatsTimeframe || 'mese_corrente';
+  const range = tf === 'all' ? null : (tf === 'custom' ? getTimeframeRange('custom', uiState.settingStatsCustomFrom, uiState.settingStatsCustomTo) : getTimeframeRange(tf));
+  const stats = computeSetterStats(db, range);
+
+  const tabsHtml = SETTING_STATS_TIMEFRAMES.map(k =>
+    `<button class="pill ${tf === k ? 'active' : ''}" data-setting-stats-tf="${k}">${SETTING_STATS_TIMEFRAME_LABELS[k]}</button>`
+  ).join('');
+
+  appRoot.innerHTML = `
+    ${renderSubTabsBar('setting', 'statistiche')}
+    <section class="card">
+      <div class="vnd-timeframe-tabs">${tabsHtml}</div>
+      ${tf === 'custom' ? `
+      <div class="custom-range" style="margin-top:8px;">
+        <label>dal <input type="date" id="settingStatsFrom" value="${uiState.settingStatsCustomFrom ? uiState.settingStatsCustomFrom : dateInputValue(range.start)}"></label>
+        <label>al <input type="date" id="settingStatsTo" value="${uiState.settingStatsCustomTo ? uiState.settingStatsCustomTo : dateInputValue(range.end)}"></label>
+        <button class="btn-ghost" id="btnSettingStatsApplyRange">Applica</button>
+      </div>` : ''}
+      <p class="text-dim" style="font-size:0.82rem;">${tf === 'all' ? 'Tutto lo storico registrato.' : (tf === 'custom' ? `Periodo: dal ${fmtDate(range.start)} al ${fmtDate(range.end)}.` : `Periodo: ${TIMEFRAME_LABELS[tf] || tf}.`)}</p>
+    </section>
+
+    <section class="vnd-stats-grid">
+      <div class="card kpi-card"><div class="kpi-value">${stats.fissati}</div><div class="kpi-label">Appuntamenti Fissati</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.presentati}</div><div class="kpi-label">Appuntamenti Presentati</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.showUpRate}%</div><div class="kpi-label">Show Up Rate (su svolti)</div></div>
+      <div class="card kpi-card"><div class="kpi-value">${stats.closingRate}%</div><div class="kpi-label">Closing Rate (su presentati)</div></div>
+    </section>
+
+    <section class="two-col">
+      <div class="card kpi-card accented">
+        <div class="kpi-value">${stats.mediaFissatiGiorno}</div>
+        <div class="kpi-label">Media Fissati / Giorno (feriali, esclusi sab-dom)</div>
+      </div>
+      <div class="card kpi-card">
+        <div class="kpi-value">${stats.svolti}</div>
+        <div class="kpi-label">Appuntamenti Già Svolti nel periodo</div>
+      </div>
+    </section>
+  `;
+
+  wireSubTabsBar('setting');
+  appRoot.querySelectorAll('[data-setting-stats-tf]').forEach(btn => {
+    btn.addEventListener('click', () => { uiState.settingStatsTimeframe = btn.dataset.settingStatsTf; renderSettingStatistiche(); });
+  });
+  const btnApplyRangeSetting = document.getElementById('btnSettingStatsApplyRange');
+  if (btnApplyRangeSetting) {
+    btnApplyRangeSetting.addEventListener('click', () => {
+      const from = document.getElementById('settingStatsFrom').value;
+      const to = document.getElementById('settingStatsTo').value;
+      if (!from || !to) return;
+      uiState.settingStatsCustomFrom = from;
+      uiState.settingStatsCustomTo = to;
+      renderSettingStatistiche();
     });
   }
 }

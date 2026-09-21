@@ -453,6 +453,76 @@ function computeVenditoreStats(db, range) {
   };
 }
 
+/** Numero di giorni feriali (lun-ven) tra due date, incluso entrambi gli estremi — usato
+ * per la media "appuntamenti fissati/giorno" del Setter (weekend escluso su richiesta
+ * esplicita dell'utente: nessun lavoro atteso sab/dom, non va a diluire la media). */
+function countWeekdays(start, end) {
+  let count = 0;
+  const d = startOfDay(start);
+  const last = startOfDay(end);
+  while (d <= last) {
+    const dow = d.getDay(); // 0=domenica, 6=sabato
+    if (dow !== 0 && dow !== 6) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
+/**
+ * Statistiche aggregate Setter per un range (o "all time" se range è null) — sezione
+ * "Statistiche" dentro Setting, richiesta esplicitamente dall'utente sullo stile di
+ * computeVenditoreStats ma con metriche specifiche del ruolo Setter:
+ * - fissati: appuntamenti Setter REGISTRATI nel periodo (createdAt), stesso criterio di
+ *   computeFunnelValues ("l'attività di fissaggio fatta in quel periodo").
+ * - presentati: tra gli appuntamenti IN AGENDA nel periodo (scheduledAt), quelli con
+ *   presentedStatus === 'presented'.
+ * - showUpRate: CORREZIONE esplicita dell'utente — non va calcolato sui fissati totali,
+ *   ma solo sugli appuntamenti GIÀ SVOLTI (scheduledAt <= adesso): quelli ancora futuri
+ *   non possono avere un esito e abbasserebbero artificialmente il tasso.
+ * - mediaFissatiGiorno: fissati / giorni feriali (lun-ven) nel range.
+ * - closingRate: quota di "presentati" (SOLO quelli, non tutti gli scoped) che risultano
+ *   chiusi — "quanti apt presentati (solamente i presentati) vengono chiusi".
+ */
+function computeSetterStats(db, range) {
+  const all = (db.appointments || []).filter(a => a.role === 'setter');
+  const now = new Date();
+  const inR = (a, field) => !range || inRange(a[field], range);
+
+  const fissatiAppts = all.filter(a => inR(a, 'createdAt'));
+  const scoped = all.filter(a => inR(a, 'scheduledAt'));
+
+  const svolti = scoped.filter(a => a.scheduledAt && new Date(a.scheduledAt) <= now);
+  const presentati = scoped.filter(a => a.presentedStatus === 'presented');
+  const presentatiSvolti = svolti.filter(a => a.presentedStatus === 'presented');
+
+  const showUpRate = svolti.length > 0 ? pct(presentatiSvolti.length, svolti.length) : 0;
+  const closingRate = presentati.length > 0 ? pct(presentati.filter(a => a.closed).length, presentati.length) : 0;
+
+  // Range effettivo per la media/giorno: se "all time" (range=null) usa dal primo
+  // appuntamento fissato ad oggi, altrimenti il range del timeframe scelto.
+  let spanStart = range ? range.start : null;
+  const spanEnd = range ? range.end : now;
+  if (!range) {
+    const earliest = all.reduce((min, a) => {
+      const d = new Date(a.createdAt);
+      return (!min || d < min) ? d : min;
+    }, null);
+    spanStart = earliest || now;
+  }
+  const weekdays = countWeekdays(spanStart, spanEnd);
+  const mediaFissatiGiorno = weekdays > 0 ? round1(fissatiAppts.length / weekdays) : 0;
+
+  return {
+    fissati: fissatiAppts.length,
+    presentati: presentati.length,
+    svolti: svolti.length,
+    showUpRate,
+    closingRate,
+    mediaFissatiGiorno,
+    weekdays
+  };
+}
+
 /** Raggruppa gli eventi di commissione per giorno (YYYY-MM-DD) per il calendario. */
 function groupEventsByDay(events) {
   const map = {};

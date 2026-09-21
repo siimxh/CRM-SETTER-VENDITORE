@@ -733,6 +733,12 @@ body.in-session #topbar { display: none; }
   text-transform: uppercase;
   color: var(--accent);
 }
+/* Variante "distruttiva" (Round Recupero No Show > Rimuovi dal round) — stesso layout
+   dell'outcome-btn normale ma tinta di avviso, per distinguerla a colpo d'occhio dalle
+   altre azioni che invece tengono il lead nel round. */
+.outcome-btn-danger { color: var(--danger); }
+.outcome-btn-danger:hover { box-shadow: inset 0 0 0 1px var(--danger); }
+.outcome-btn-danger .outcome-btn-sub { color: var(--danger); }
 
 @media (max-width: 500px) {
   .outcome-grid { grid-template-columns: 1fr 1fr; }
@@ -982,6 +988,21 @@ body.in-session #topbar { display: none; }
 
 .crm-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
 .crm-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.crm-search-wrap { flex: 1 1 220px; min-width: 180px; max-width: 320px; }
+.crm-search-input {
+  display: block;
+  width: 100%;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-family: 'Archivo', sans-serif;
+}
+.crm-search-input:focus { outline: none; border-color: var(--accent); }
+.crm-search-input::placeholder { color: var(--text-dim); }
 
 .crm-table-wrap { overflow-x: auto; }
 .crm-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; min-width: 860px; table-layout: auto; }
@@ -1341,5 +1362,46 @@ body.in-session #topbar { display: none; }
 }
 .switch input:checked + .switch-track { background: var(--accent-dim); border-color: var(--accent); }
 .switch input:checked + .switch-track::before { transform: translate(18px, -50%); background: var(--accent); }
+
+/* ============================================================================
+ * Round Recupero No Show — card d'ingresso fissa (Setting > Sessioni) + schermata a
+ * schermo intero (riusa .session-screen/.session-topbar/.outcome-grid già definiti
+ * sopra per lo stesso linguaggio visivo delle sessioni di chiamata normali).
+ * ==========================================================================*/
+
+.recov-entry-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-top: 3px solid var(--accent);
+}
+.recov-entry-info h3 { margin: 0 0 4px; }
+.recov-entry-info p { margin: 0; max-width: 520px; }
+.recov-entry-action { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.recov-entry-count { font-family: var(--mono); font-weight: 800; font-size: 2.2rem; line-height: 1; color: var(--accent); }
+.recov-entry-count-label { font-family: var(--mono); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); max-width: 70px; line-height: 1.25; }
+
+.recov-badge {
+  display: inline-block;
+  margin-top: 5px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  font-size: 0.62rem;
+}
+
+/* Schermata round: nome/telefono "a schermo grande" come richiesto esplicitamente. */
+.recov-hero { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 34px 20px; }
+.recov-hero-name { font-size: 2.4rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.1; }
+.recov-hero-phone-row { display: flex; align-items: center; gap: 8px; }
+.recov-hero-phone { font-family: var(--mono); font-size: 1.3rem; color: var(--text-dim); }
+.recov-hero-counter { font-family: var(--mono); font-size: 0.8rem; color: var(--text-dim); margin-top: 6px; }
+.recov-hero-counter strong { color: var(--text); font-size: 1rem; }
+
+@media (max-width: 560px) {
+  .recov-hero-name { font-size: 1.9rem; }
+  .recov-hero-phone { font-size: 1.1rem; }
+}
 
 .builder-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px; }

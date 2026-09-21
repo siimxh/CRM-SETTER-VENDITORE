@@ -129,7 +129,19 @@ function defaultData() {
 
     // Registro link registrazioni call (solo sezione Venditore) — vedi renderCallRecordings
     // in app.js. Elenco semplice di { id, label, url, createdAt }, nessun'altra struttura.
-    callRecordings: []
+    callRecordings: [],
+
+    // --- Round Recupero No Show — sessione fissa/non eliminabile (vedi app.js,
+    // renderRecoveryRoundScreen e dintorni) per richiamare i lead che hanno fatto no-show
+    // sia in Setting (presentedStatus) sia in Venditore (dealStage). Ogni entry è agganciata
+    // a un preciso appuntamento sorgente (sourceAppointmentId), non alla "persona" in
+    // astratto: così rimuovere un lead dal round o risolverlo con un nuovo appuntamento non
+    // blocca un futuro no-show sullo stesso nominativo, che genera una entry NUOVA da zero.
+    recoveryRound: [],          // [{ id, sourceAppointmentId, sourceRole, clientName, phone,
+                                 //    status: 'active'|'resolved'|'removed', callCount,
+                                 //    lastInteractionAt, createdAt, notes: [], resolvedAppointmentId }]
+    recoveryRoundActive: false, // true mentre l'utente è dentro la schermata a schermo intero del round
+    recoveryRoundCurrentLeadId: null // lead attualmente mostrato a schermo (stabile tra i re-render)
   };
 }
 
@@ -146,7 +158,9 @@ function migrateAppointment(a) {
   const out = Object.assign({
     dealStage: null,
     notes: [],
-    nextFollowUpDate: null
+    nextFollowUpDate: null,
+    recoveredFromNoShow: false, // true se creato dal Round Recupero No Show (vedi app.js)
+    recoveredFromRole: null     // 'setter' | 'venditore' — dove è avvenuto il no-show originale
   }, a);
   if (out.role === 'venditore' && !out.dealStage) {
     if (out.closed) out.dealStage = 'chiuso';
@@ -181,6 +195,9 @@ function mergeWithDefaults(parsed) {
 
   out.appointments = (parsed.appointments || []).map(migrateAppointment);
   out.callRecordings = Array.isArray(parsed.callRecordings) ? parsed.callRecordings : [];
+  out.recoveryRound = Array.isArray(parsed.recoveryRound) ? parsed.recoveryRound : [];
+  out.recoveryRoundActive = !!parsed.recoveryRoundActive;
+  out.recoveryRoundCurrentLeadId = parsed.recoveryRoundCurrentLeadId || null;
 
   return out;
 }
