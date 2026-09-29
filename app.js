@@ -1,4 +1,3 @@
-/* app.js — routing, rendering e interazioni */
 
 let db = Storage.load();
 let uiState = {
@@ -1388,7 +1387,7 @@ function renderSessioniList() {
   const rows = sessions.length ? sessions.map(s => {
     const totalCalls = s.calls.length;
     const totalLeads = s.calls.filter(c => !c.isSecondAttempt).length;
-    const duration = s.endedAt ? (new Date(s.endedAt) - new Date(s.startedAt)) : (Date.now() - new Date(s.startedAt));
+    const duration = (s.endedAt ? (new Date(s.endedAt) - new Date(s.startedAt)) : (Date.now() - new Date(s.startedAt))) - (s.pausedTotalMs || 0);
     return `
       <div class="session-card" data-sid="${s.id}">
         <div class="session-card-main">
@@ -1588,7 +1587,7 @@ function renderSessioneDetail(id) {
   }
   const totalCalls = s.calls.length;
   const totalLeads = s.calls.filter(c => !c.isSecondAttempt).length;
-  const duration = s.endedAt ? (new Date(s.endedAt) - new Date(s.startedAt)) : (Date.now() - new Date(s.startedAt));
+  const duration = (s.endedAt ? (new Date(s.endedAt) - new Date(s.startedAt)) : (Date.now() - new Date(s.startedAt))) - (s.pausedTotalMs || 0);
   const counts = {};
   s.calls.forEach(c => { counts[c.outcomeLabel] = (counts[c.outcomeLabel] || 0) + 1; });
   const breakdown = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([label, count]) => `
@@ -3202,18 +3201,29 @@ function renderSessioneAttiva() {
     </div>
   ` : '';
 
+  const isPaused = !!s.pausedAt;
+  const pauseBannerHtml = isPaused ? `
+    <div class="pause-banner">
+      <span class="blink-dot"></span>Sessione in pausa — il tempo non sta scorrendo
+      <span class="scb-hint">Premi "Riprendi" quando torni operativo per ripartire con il conteggio.</span>
+    </div>
+  ` : '';
+
   appRoot.innerHTML = `
-    <div class="session-screen">
+    <div class="session-screen${isPaused ? ' is-paused' : ''}">
       <div class="session-topbar">
         <button id="btnEndSession" class="btn-danger-ghost">■ Fine sessione</button>
         <div class="session-pipeline-name">${escapeHtml(s.pipelineName)}</div>
-        <button id="btnSkip" class="btn-skip">Skip →</button>
+        <div class="session-topbar-right">
+          <button id="btnPauseSession" class="btn-pause${isPaused ? ' is-paused' : ''}">${isPaused ? '▶ Riprendi' : '⏸ Pausa'}</button>
+          <button id="btnSkip" class="btn-skip">Skip →</button>
+        </div>
       </div>
 
       <div class="session-stats">
         <div class="stat-block">
           <div class="stat-value" id="sessionTimer">00:00</div>
-          <div class="stat-label">Durata sessione</div>
+          <div class="stat-label">Durata sessione${isPaused ? ' (in pausa)' : ''}</div>
         </div>
         <div class="stat-block">
           <div class="stat-value">${totalCalls}</div>
@@ -3226,6 +3236,7 @@ function renderSessioneAttiva() {
         ${s.skips ? `<div class="stat-block"><div class="stat-value">${s.skips}</div><div class="stat-label">Saltati</div></div>` : ''}
       </div>
 
+      ${pauseBannerHtml}
       ${secondCallBannerHtml}
 
       <div class="session-breakdown">${breakdownHtml}</div>
@@ -3235,14 +3246,36 @@ function renderSessioneAttiva() {
   `;
 
   appRoot.querySelectorAll('[data-outcome-id]').forEach(btn => {
-    btn.addEventListener('click', () => logCallAction(btn.dataset.outcomeId));
+    btn.addEventListener('click', () => { if (!db.activeSession.pausedAt) logCallAction(btn.dataset.outcomeId); });
   });
-  document.getElementById('btnSkip').addEventListener('click', skipLeadAction);
+  document.getElementById('btnSkip').addEventListener('click', () => { if (!db.activeSession.pausedAt) skipLeadAction(); });
   document.getElementById('btnEndSession').addEventListener('click', endSessionAction);
+  document.getElementById('btnPauseSession').addEventListener('click', toggleSessionPause);
 
   clearInterval(sessionTimerInterval);
   updateSessionTimer();
   sessionTimerInterval = setInterval(updateSessionTimer, 1000);
+}
+
+/**
+ * Blocca/riprende il timer della sessione attiva senza toccare startedAt: accumula
+ * il tempo passato in pausa in pausedTotalMs (sommato quando l'utente riprende) e,
+ * mentre è in pausa, tiene il timestamp d'inizio pausa in pausedAt così
+ * updateSessionTimer() può sottrarre anche la pausa ancora in corso dal conteggio
+ * (vedi sotto) — il tempo mostrato riflette solo il lavoro reale, non le pause.
+ */
+function toggleSessionPause() {
+  const s = db.activeSession;
+  if (!s) return;
+  if (s.pausedAt) {
+    const pausedMs = Date.now() - new Date(s.pausedAt).getTime();
+    s.pausedTotalMs = (s.pausedTotalMs || 0) + Math.max(0, pausedMs);
+    s.pausedAt = null;
+  } else {
+    s.pausedAt = new Date().toISOString();
+  }
+  persist();
+  renderSessioneAttiva();
 }
 
 function updateSessionTimer() {
@@ -3250,7 +3283,10 @@ function updateSessionTimer() {
   if (!s) { clearInterval(sessionTimerInterval); return; }
   const el = document.getElementById('sessionTimer');
   if (!el) { clearInterval(sessionTimerInterval); return; }
-  el.textContent = fmtDuration(Date.now() - new Date(s.startedAt).getTime());
+  const pausedTotalMs = s.pausedTotalMs || 0;
+  const ongoingPauseMs = s.pausedAt ? (Date.now() - new Date(s.pausedAt).getTime()) : 0;
+  const elapsed = Date.now() - new Date(s.startedAt).getTime() - pausedTotalMs - ongoingPauseMs;
+  el.textContent = fmtDuration(Math.max(0, elapsed));
 }
 
 // Label esatta (case-sensitive) dell'esito di default che aggancia il popup CRM — vedi
@@ -3369,6 +3405,12 @@ function skipLeadAction() {
 function endSessionAction() {
   showConfirm('Terminare la sessione? Potrai rivederla nella sezione Sessioni.', () => {
     const s = db.activeSession;
+    if (s.pausedAt) {
+      // Sessione terminata mentre era in pausa: chiude la pausa aperta prima di
+      // salvare, altrimenti quel tratto di tempo non verrebbe mai sottratto.
+      s.pausedTotalMs = (s.pausedTotalMs || 0) + Math.max(0, Date.now() - new Date(s.pausedAt).getTime());
+      s.pausedAt = null;
+    }
     s.endedAt = new Date().toISOString();
     db.sessions.push(s);
     db.activeSession = null;
@@ -3590,7 +3632,9 @@ function startSessionAction(pipelineId) {
     calls: [],
     skips: 0,
     retryCallsPending: false,
-    callAttemptsOnLead: 0
+    callAttemptsOnLead: 0,
+    pausedAt: null,
+    pausedTotalMs: 0
   };
   persist();
   closeModal();
@@ -3988,3 +4032,4 @@ applyTheme(db.settings);
 
 window.addEventListener('hashchange', renderRoute);
 renderRoute();
+

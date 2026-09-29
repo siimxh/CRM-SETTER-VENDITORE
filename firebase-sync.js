@@ -110,3 +110,4 @@ const FirebaseSync = {
     return true;
   }
 };
+

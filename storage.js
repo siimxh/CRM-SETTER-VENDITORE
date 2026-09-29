@@ -21,6 +21,8 @@ function defaultOutcomesList() {
     { id: uid('esito'), label: 'Appuntamento Fissato',  isNoAnswer: false, isConversion: true,  isDefault: true },
     { id: uid('esito'), label: 'Non interessato',       isNoAnswer: false, isConversion: false, isDefault: true },
     { id: uid('esito'), label: 'conferma appuntamento', isNoAnswer: false, isConversion: true,  isDefault: true },
+    { id: uid('esito'), label: 'Non in target',         isNoAnswer: false, isConversion: false, isDefault: true },
+    { id: uid('esito'), label: 'Già con noi',           isNoAnswer: false, isConversion: false, isDefault: true },
   ];
 }
 
@@ -171,6 +173,35 @@ function migrateAppointment(a) {
 }
 
 /**
+ * Aggiunge alle pipeline già esistenti (salvate prima dell'introduzione di un nuovo
+ * esito di default) gli esiti mancanti, così l'utente li vede subito senza dover
+ * creare una nuova pipeline da zero. Il confronto è per label (case-insensitive,
+ * trim) per non duplicare un esito che l'utente ha già, magari rinominato a mano.
+ */
+function ensureDefaultOutcomesOnPipelines(pipelines) {
+  const mustHave = [
+    { label: 'Non in target', isNoAnswer: false, isConversion: false },
+    { label: 'Già con noi',   isNoAnswer: false, isConversion: false }
+  ];
+  return (pipelines || []).map(p => {
+    const outcomes = Array.isArray(p.outcomes) ? p.outcomes.slice() : [];
+    const existingLabels = outcomes.map(o => (o.label || '').trim().toLowerCase());
+    mustHave.forEach(def => {
+      if (!existingLabels.includes(def.label.toLowerCase())) {
+        outcomes.push({
+          id: uid('esito'),
+          label: def.label,
+          isNoAnswer: def.isNoAnswer,
+          isConversion: def.isConversion,
+          isDefault: true
+        });
+      }
+    });
+    return Object.assign({}, p, { outcomes });
+  });
+}
+
+/**
  * Merge "profondo ma mirato" dei dati salvati sopra i default: necessario perché
  * defaultData() ora contiene oggetti annidati (goals.setter.month, settings.toggles, ...)
  * e un semplice Object.assign(defaultData(), parsed) sovrascriverebbe l'intero ramo
@@ -193,6 +224,7 @@ function mergeWithDefaults(parsed) {
   out.settings.colors = Object.assign({}, base.settings.colors, (parsed.settings || {}).colors);
   out.settings.toggles = Object.assign({}, base.settings.toggles, (parsed.settings || {}).toggles);
 
+  out.pipelines = ensureDefaultOutcomesOnPipelines(out.pipelines);
   out.appointments = (parsed.appointments || []).map(migrateAppointment);
   out.callRecordings = Array.isArray(parsed.callRecordings) ? parsed.callRecordings : [];
   out.recoveryRound = Array.isArray(parsed.recoveryRound) ? parsed.recoveryRound : [];
@@ -225,3 +257,4 @@ const Storage = {
     }
   }
 };
+

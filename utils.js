@@ -533,3 +533,4 @@ function groupEventsByDay(events) {
   });
   return map;
 }
+
