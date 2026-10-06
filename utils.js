@@ -82,6 +82,24 @@ function fmtDuration(ms) {
 function pct(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : 0; }
 function round1(n) { return Math.round(n * 10) / 10; }
 
+/**
+ * "Domani alle 9:00" / "Oggi alle 15:00" / "07/10 alle 9:00" — usato nel Round Conferme
+ * per mostrare l'orario dell'appuntamento in modo immediato durante la chiamata (vedi
+ * renderConfirmRoundScreen in app.js), evitando di dover fare il calcolo a mente.
+ */
+function fmtRelativeDayTime(d) {
+  const target = new Date(d);
+  const targetKey = dateInputValue(target);
+  const todayKey = dateInputValue(new Date());
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowKey = dateInputValue(tomorrow);
+  const timeStr = fmtTime(target);
+  if (targetKey === todayKey) return `Oggi alle ${timeStr}`;
+  if (targetKey === tomorrowKey) return `Domani alle ${timeStr}`;
+  return `${fmtDate(target)} alle ${timeStr}`;
+}
+
 function dateInputValue(d) {
   const x = new Date(d);
   const y = x.getFullYear();
@@ -107,28 +125,61 @@ function getFilteredSessions(db, range, pipelineId) {
  * isSecondAttempt=true è il richiamo dello stesso lead subito dopo un esito
  * "nessuna risposta" (vedi logCallAction in app.js) e va raggruppata con la
  * chiamata precedente: conta come chiamata in più, ma non come nuovo lead.
+ *
+ * CORREZIONE (segnalata dall'utente): "Esiti nel periodo" deve contare LEAD UNICI, non
+ * singole chiamate — un lead richiamato 2-3 volte (max MAX_CALL_ATTEMPTS) perché non
+ * risponde va contato UNA volta sola come "Non risp", non una volta per ogni tentativo
+ * (altrimenti il numero di "Non risp" può superare il numero di lead contattati). Per
+ * ogni lead si usa l'esito dell'ULTIMO tentativo (quello "definitivo" per quel lead).
+ *
+ * Raggruppamento per groupId: ogni chiamata "di apertura" su un lead riceve un groupId
+ * univoco (vedi logCallAction/logCallbackCall in app.js); i tentativi immediati di
+ * richiamo (isSecondAttempt) riusano lo stesso groupId. Per i lead "Da richiamare"
+ * richiamati più tardi (anche in un'altra sessione, es. la sessione automatica
+ * "Richiami" del giorno — vedi appendCallbackCallToSession), la chiamata di richiamo
+ * riusa lo STESSO groupId del lead originale se il richiamo avviene lo stesso giorno in
+ * cui è diventato "da richiamare" (così non si conta un lead in più), oppure riceve un
+ * groupId NUOVO se avviene un giorno diverso (conta giustamente come lead del giorno in
+ * cui lo richiami). Le chiamate più vecchie senza groupId (dati salvati prima di questa
+ * modifica) usano il vecchio raggruppamento posizionale isSecondAttempt come fallback.
  */
 function computeStats(sessions) {
   let totalCalls = 0, totalDurationMs = 0, totalSkips = 0;
-  const outcomeCounts = {};
-  const leads = []; // ogni elemento raggruppa le chiamate (1 o 2) fatte allo stesso lead
+  const leads = []; // ogni elemento raggruppa le chiamate (1 o più) fatte allo stesso lead
+  const groupIndexByGroupId = {}; // groupId -> indice in leads[], valido su TUTTE le sessioni passate
 
   sessions.forEach(s => {
     const end = s.endedAt ? new Date(s.endedAt) : new Date();
     totalDurationMs += Math.max(0, end.getTime() - new Date(s.startedAt).getTime());
     totalSkips += s.skips || 0;
+    totalCalls += s.calls.length;
 
     let currentLead = null;
     s.calls.forEach(c => {
-      totalCalls += 1;
-      outcomeCounts[c.outcomeLabel] = (outcomeCounts[c.outcomeLabel] || 0) + 1;
-      if (c.isSecondAttempt && currentLead) {
+      if (c.groupId) {
+        if (Object.prototype.hasOwnProperty.call(groupIndexByGroupId, c.groupId)) {
+          leads[groupIndexByGroupId[c.groupId]].push(c);
+        } else {
+          groupIndexByGroupId[c.groupId] = leads.length;
+          leads.push([c]);
+        }
+      } else if (c.isSecondAttempt && currentLead) {
         currentLead.push(c);
       } else {
         currentLead = [c];
         leads.push(currentLead);
       }
     });
+  });
+
+  // Esiti per LEAD UNICO (non per chiamata): ogni lead conta una volta, con l'esito
+  // del suo ultimo tentativo (ordinato per timestamp: le chiamate di un lead possono
+  // arrivare da sessioni diverse processate fuori ordine cronologico).
+  const outcomeCounts = {};
+  leads.forEach(calls => {
+    const sorted = calls.length > 1 ? [...calls].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)) : calls;
+    const last = sorted[sorted.length - 1];
+    outcomeCounts[last.outcomeLabel] = (outcomeCounts[last.outcomeLabel] || 0) + 1;
   });
 
   const totalLeads = leads.length;
@@ -217,6 +268,47 @@ function inRange(dateVal, range) {
   if (!dateVal) return false;
   const d = new Date(dateVal);
   return d >= range.start && d <= range.end;
+}
+
+/**
+ * Trova il giorno/settimana/mese con le commissioni totali più alte in assoluto su
+ * tutto lo storico registrato — usato dal toggle "Migliore di sempre" delle card
+ * Obiettivi in dashboard (vedi renderGoalsPeriodModeToggle/getGoalsPeriodRange in
+ * app.js). Raggruppa ogni evento di commissione (allCommissionEvents) nel periodo a cui
+ * appartiene (giorno esatto / settimana lun-dom / mese) e ritorna il range con il
+ * totale più alto. Ritorna null se non ci sono ancora commissioni registrate (es. tool
+ * appena iniziato) — chi chiama questa funzione deve gestire il fallback al periodo
+ * corrente in quel caso.
+ */
+function findBestPeriod(db, granularity) {
+  const events = allCommissionEvents(db);
+  if (!events.length) return null;
+
+  const buckets = {}; // key -> { range, total }
+  events.forEach(ev => {
+    const d = new Date(ev.date);
+    if (isNaN(d)) return;
+    let key, range;
+    if (granularity === 'day') {
+      key = dateInputValue(d);
+      range = { start: startOfDay(d), end: endOfDay(d) };
+    } else if (granularity === 'week') {
+      const s = startOfWeek(d);
+      key = dateInputValue(s);
+      range = { start: s, end: endOfWeek(d) };
+    } else {
+      key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      range = { start: startOfMonth(d), end: endOfMonth(d) };
+    }
+    if (!buckets[key]) buckets[key] = { range, total: 0 };
+    buckets[key].total += ev.amount;
+  });
+
+  let best = null;
+  Object.values(buckets).forEach(entry => {
+    if (!best || entry.total > best.total) best = entry;
+  });
+  return best ? { range: best.range, total: round2(best.total) } : null;
 }
 
 /**
@@ -343,10 +435,17 @@ function computeFunnelValues(db, role, range) {
   const showUpEvents = events.filter(e => e.source === 'showup');
   const chiusureEvents = events.filter(e => e.source === 'setting' || e.source === 'vendita');
 
+  // "Fatturato" (solo Venditore): il TOTALE VENDUTO (non le commissioni) sugli appuntamenti
+  // chiusi nel periodo — richiesto esplicitamente dall'utente come 4a tappa della card
+  // Obiettivi Venditore, accanto a Presentati/Chiusi. Stesso criterio di "chiusi" sopra
+  // (scheduledAt nel range, closed=true), sommando apptTotalSold() invece di contare le righe.
+  const fatturato = round2(appts.filter(a => a.closed).reduce((sum, a) => sum + apptTotalSold(a), 0));
+
   return {
     appuntamentiFissati: fissatiAppts.length,
     presentati,
     chiusi,
+    fatturato,
     commissioniShowUp: sumEvents(showUpEvents),
     commissioniChiusure: sumEvents(chiusureEvents),
     commissioniTot: sumEvents(events)
@@ -359,15 +458,17 @@ function computeFunnelValues(db, role, range) {
  * card (giorno/settimana/mese) in sotto-bucket temporali e ricalcola il valore reale
  * della tappa in ciascuno con computeFunnelValues — non sono dati finti, è lo storico
  * reale ricampionato. Per timeframe "day" (un solo giorno) i bucket sono le ultime 7
- * ore-non-vuote non sono tracciate, quindi si usano gli ultimi 7 giorni fino ad oggi
- * incluso, cosi la card "Giorno" mostra comunque un trend utile invece di un solo punto.
+ * ore-non-vuote non sono tracciate, quindi si usano gli ultimi 7 giorni fino al giorno
+ * mostrato incluso (range.end — normalmente oggi, ma può essere un altro giorno quando è
+ * selezionata la modalità "Migliore di sempre", vedi findBestPeriod), cosi la card
+ * "Giorno" mostra comunque un trend utile invece di un solo punto.
  */
 function computeFunnelSparkline(db, role, stepKey, timeframe, range) {
   const buckets = [];
   if (timeframe === 'day') {
-    const now = new Date();
+    const anchor = range ? range.end : new Date();
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(now); d.setDate(d.getDate() - i);
+      const d = new Date(anchor); d.setDate(d.getDate() - i);
       buckets.push({ start: startOfDay(d), end: endOfDay(d) });
     }
   } else if (timeframe === 'week') {

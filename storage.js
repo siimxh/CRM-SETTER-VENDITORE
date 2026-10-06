@@ -143,7 +143,30 @@ function defaultData() {
                                  //    status: 'active'|'resolved'|'removed', callCount,
                                  //    lastInteractionAt, createdAt, notes: [], resolvedAppointmentId }]
     recoveryRoundActive: false, // true mentre l'utente è dentro la schermata a schermo intero del round
-    recoveryRoundCurrentLeadId: null // lead attualmente mostrato a schermo (stabile tra i re-render)
+    recoveryRoundCurrentLeadId: null, // lead attualmente mostrato a schermo (stabile tra i re-render)
+
+    // --- "Da richiamare" — lead da ririchiamare creati premendo l'esito "Da richiamare"
+    // durante una sessione (vedi app.js, openCallbackModal/logCallAction/logCallbackCall).
+    // Indipendente dal Round Recupero No Show: qui l'orario è scelto dall'utente (quick
+    // button o personalizzato), non una rotazione automatica. Ogni entry:
+    // { id, leadName, phone, scheduledAt, createdAt, createdDateKey, leadGroupId,
+    //   sourcePipelineId, sourcePipelineName, sourceSessionId, status: 'pending'|'done',
+    //   callCount, lastCalledAt, resolvedOutcomeLabel, resolvedAt,
+    //   inCallAttempts, inCallRetryPending, inCallGroupId } — i campi inCall* sono stato
+    // transitorio della singola chiamata in corso (vedi renderCallbackCallScreen).
+    callbacks: [],
+    callbackCallActiveId: null, // id del callback attualmente aperto a schermo intero (o null)
+
+    // --- Round Conferme — richiama sistematicamente gli appuntamenti Setter di DOMANI
+    // non ancora confermati/annullati (vedi app.js, renderConfirmRoundScreen e dintorni).
+    // Due punti d'ingresso: "standalone" dal tasto in Appuntamenti (si chiude e basta alla
+    // fine) oppure "pre-sessione", proposto con un Sì/No appena si avvia una sessione
+    // normale (alla fine prosegue automaticamente nella sessione scelta — vedi
+    // startSessionAction/beginPipelineSession).
+    confirmRoundActive: false,           // true mentre si è nella schermata a schermo intero del round
+    confirmRoundCurrentApptId: null,     // appuntamento attualmente mostrato (stabile tra i re-render)
+    confirmRoundReturnMode: null,        // 'standalone' | 'session' — cosa fare quando il round finisce
+    confirmRoundPendingPipelineId: null  // solo con returnMode 'session': pipeline da avviare a fine round
   };
 }
 
@@ -162,7 +185,17 @@ function migrateAppointment(a) {
     notes: [],
     nextFollowUpDate: null,
     recoveredFromNoShow: false, // true se creato dal Round Recupero No Show (vedi app.js)
-    recoveredFromRole: null     // 'setter' | 'venditore' — dove è avvenuto il no-show originale
+    recoveredFromRole: null,    // 'setter' | 'venditore' — dove è avvenuto il no-show originale
+
+    // --- Round Conferme (solo Setter, vedi app.js) — stato di rotazione/chiamata per
+    // questo specifico appuntamento. confirmGroupId identifica "questa chiamata di
+    // conferma" ai fini di computeStats (tutte le chiamate fatte per confermare QUESTO
+    // appuntamento contano come 1 lead, anche se fatte in momenti diversi della giornata);
+    // viene azzerato quando l'appuntamento viene spostato (è di fatto un nuovo slot).
+    confirmGroupId: null,
+    confirmCallAttempts: 0,      // tentativi consecutivi di "Non risposto" nel round (doppio squillo)
+    confirmRetryPending: false,  // true mentre si mostra il banner "richiama subito" nel round
+    confirmLastInteractionAt: null // usato per la rotazione "meno recentemente mostrato" nel round
   }, a);
   if (out.role === 'venditore' && !out.dealStage) {
     if (out.closed) out.dealStage = 'chiuso';
@@ -230,6 +263,13 @@ function mergeWithDefaults(parsed) {
   out.recoveryRound = Array.isArray(parsed.recoveryRound) ? parsed.recoveryRound : [];
   out.recoveryRoundActive = !!parsed.recoveryRoundActive;
   out.recoveryRoundCurrentLeadId = parsed.recoveryRoundCurrentLeadId || null;
+  out.callbacks = Array.isArray(parsed.callbacks) ? parsed.callbacks : [];
+  out.callbackCallActiveId = parsed.callbackCallActiveId || null;
+
+  out.confirmRoundActive = !!parsed.confirmRoundActive;
+  out.confirmRoundCurrentApptId = parsed.confirmRoundCurrentApptId || null;
+  out.confirmRoundReturnMode = parsed.confirmRoundReturnMode || null;
+  out.confirmRoundPendingPipelineId = parsed.confirmRoundPendingPipelineId || null;
 
   return out;
 }

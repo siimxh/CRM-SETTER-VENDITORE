@@ -16,6 +16,7 @@ let uiState = {
   calMonthOffset: 0,           // scostamento in mesi dal mese corrente, per la navigazione del calendario
   editingGoal: null,           // { role, timeframe, step } quando un target obiettivo è in modifica inline
   goalsTimeframe: 'month',     // timeframe attivo (day|week|month) per le card Obiettivi (stile Hero + Sparkline)
+  goalsPeriodMode: 'current',  // 'current' (giorno/settimana/mese corrente) | 'best' (il migliore di sempre per commissioni) per le card Obiettivi
   settingTab: 'appuntamenti',  // sotto-tab attiva dentro la sezione Setting: 'appuntamenti' | 'sessioni' | 'statistiche'
   venditoreTab: 'appuntamenti',// sotto-tab attiva dentro la sezione Venditore: 'appuntamenti' | 'statistiche'
   settingStatsTimeframe: 'mese_corrente', // timeframe attivo per la pagina Statistiche Setting
@@ -24,7 +25,8 @@ let uiState = {
   andamentoTimeframe: 'mese_corrente', // timeframe dei grafici a linea "Andamento generale" in dashboard
   andamentoCustomFrom: null,
   andamentoCustomTo: null,
-  andamentoCommRole: 'all'     // 'all' | 'setter' | 'venditore' — filtro ruolo solo per il grafico Commissioni
+  andamentoCommRole: 'all',    // 'all' | 'setter' | 'venditore' — filtro ruolo solo per il grafico Commissioni
+  sessionMinimized: false      // true quando l'utente è "uscito" dalla sessione attiva per navigare altrove, senza terminarla (vedi renderActiveSessionIndicator)
 };
 let sessionTimerInterval = null;
 
@@ -397,8 +399,31 @@ const SETTING_SUBROUTES = { appuntamenti: 'setting-appuntamenti', sessioni: 'ses
 const VENDITORE_SUBROUTES = { appuntamenti: 'venditore-appuntamenti', statistiche: 'venditore-statistiche' };
 
 function renderRoute() {
-  if (db.activeSession) {
+  // Indicatore fisso "sessione in corso" + etichetta del tasto "+ Nuova sessione" — vanno
+  // aggiornati PRIMA di qualunque return anticipato qui sotto, perché dipendono solo dallo
+  // stato (db.activeSession/uiState.sessionMinimized) e non dalla route effettivamente resa.
+  renderActiveSessionIndicator();
+  updateNuovaSessioneButtonLabel();
+  renderConfirmAlertBanner();
+
+  // La schermata di una chiamata di richiamo ("Chiama" su un lead "Da richiamare") ha
+  // SEMPRE priorità, anche su una sessione attiva: è un flusso "sopra" la sessione, che
+  // quando finisce torna automaticamente alla sessione (se ancora aperta) o alla route
+  // normale (vedi logCallbackCall/startCallbackCall).
+  if (db.callbackCallActiveId) {
+    renderCallbackCallScreen();
+    return;
+  }
+  // La sessione attiva resta la vista forzata DI DEFAULT, a meno che l'utente non abbia
+  // premuto "Esci" per navigare altrove senza terminarla (uiState.sessionMinimized) — in
+  // quel caso si prosegue con il routing normale qui sotto, e l'indicatore lampeggiante
+  // (appena reso sopra) resta visibile per poter rientrare.
+  if (db.activeSession && !uiState.sessionMinimized) {
     renderSessioneAttiva();
+    return;
+  }
+  if (db.confirmRoundActive) {
+    renderConfirmRoundScreen();
     return;
   }
   if (db.recoveryRoundActive) {
@@ -435,6 +460,46 @@ function renderRoute() {
   else if (route === 'venditore') renderVenditorePage();
   else if (route === 'impostazioni') renderBuilderPage();
   else renderDashboard();
+}
+
+/**
+ * Pallino rosso lampeggiante fisso ("sessione in corso, premi per rientrare"), mostrato
+ * SOLO quando c'è una sessione attiva E l'utente l'ha minimizzata (uiState.sessionMinimized)
+ * per navigare altrove — vedi il tasto "Esci" in renderSessioneAttiva. È un elemento DOM
+ * creato una sola volta e tenuto fuori da #app (appeso a document.body), così sopravvive
+ * ad ogni appRoot.innerHTML = ... dei re-render normali invece di dover essere ridisegnato
+ * ogni volta; qui lo si aggiorna/nasconde in base allo stato corrente.
+ */
+function renderActiveSessionIndicator() {
+  const show = !!(db.activeSession && uiState.sessionMinimized);
+  let el = document.getElementById('activeSessionIndicator');
+  if (!show) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('button');
+    el.id = 'activeSessionIndicator';
+    el.className = 'active-session-indicator';
+    el.addEventListener('click', () => {
+      uiState.sessionMinimized = false;
+      renderRoute();
+    });
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<span class="blink-dot"></span>In sessione — torna`;
+}
+
+/** Il tasto "+ Nuova sessione" in topbar non va mai cliccato per AVVIARE una seconda
+ * sessione sopra quella già in corso (sovrascriverebbe db.activeSession perdendo i dati
+ * della prima) — mentre una sessione è attiva, diventa invece un modo rapido per
+ * rientrarci (utile soprattutto quando è minimizzata, come scorciatoia in più oltre
+ * all'indicatore lampeggiante). Il topbar è markup statico fuori da #app, quindi questa
+ * etichetta va aggiornata esplicitamente ad ogni renderRoute(), non si rigenera da sola. */
+function updateNuovaSessioneButtonLabel() {
+  const btn = document.getElementById('btnNuovaSessione');
+  if (!btn) return;
+  btn.textContent = db.activeSession ? '↩ Torna alla sessione' : '+ Nuova sessione';
 }
 
 /**
@@ -530,14 +595,18 @@ function renderDashboard() {
  */
 function renderDashboardTopSections() {
   const eyebrowsHtml = renderEyebrows();
+  const modeToggleHtml = renderGoalsPeriodModeToggle();
   const tabsHtml = renderGoalsTimeframeTabs();
+  const bestCaptionHtml = renderBestPeriodCaption();
   const setterFunnel = renderFunnelSection('setter', 'Obiettivi Setter', FUNNEL_STEPS_SETTER);
   const venditoreFunnel = renderFunnelSection('venditore', 'Obiettivi Venditore', FUNNEL_STEPS_VENDITORE);
   const commKpi = renderCommissionKpiSection();
 
   return `
     ${eyebrowsHtml}
+    ${modeToggleHtml}
     ${tabsHtml}
+    ${bestCaptionHtml}
     <section class="card goals-section">
       <h2><span class="role-dot setter"></span>Obiettivi Setter</h2>
       ${setterFunnel}
@@ -603,16 +672,64 @@ const FUNNEL_STEPS_SETTER = [
 const FUNNEL_STEPS_VENDITORE = [
   { key: 'appuntamentiFissati', label: 'Appuntamenti Assegnati', money: false, isAutoAssignedField: true },
   { key: 'presentati', label: 'Presentati', money: false },
-  { key: 'chiusi', label: 'Chiusi', money: false }
+  { key: 'chiusi', label: 'Chiusi', money: false },
+  // 4a tappa richiesta esplicitamente dall'utente: il totale VENDUTO (non le commissioni)
+  // sugli appuntamenti Venditore chiusi nel periodo — vedi "fatturato" in computeFunnelValues.
+  { key: 'fatturato', label: 'Fatturato', money: true }
 ];
 
 const TIMEFRAME_KEYS = ['day', 'week', 'month'];
 const TIMEFRAME_CARD_LABELS = { day: 'Giorno', week: 'Settimana', month: 'Mese' };
+const BEST_PERIOD_LABELS = { day: 'Miglior giorno', week: 'Migliore settimana', month: 'Miglior mese' };
+
+/**
+ * Range effettivo per le card Obiettivi (Setter/Venditore), in base al timeframe
+ * (day/week/month — granularità) E alla modalità (uiState.goalsPeriodMode):
+ * - 'current' (default): il giorno/settimana/mese corrente, come sempre.
+ * - 'best': il giorno/settimana/mese con le commissioni totali più alte in assoluto su
+ *   tutto lo storico (vedi findBestPeriod in utils.js) — richiesto esplicitamente
+ *   dall'utente per vedere subito "com'era andata" nel loro periodo migliore di sempre,
+ *   con tutte le card Obiettivi che si aggiornano di conseguenza. Se non ci sono ancora
+ *   commissioni registrate, ricade sul periodo corrente (vedi renderBestPeriodCaption
+ *   per l'avviso mostrato in quel caso).
+ */
+function getGoalsPeriodRange(tf) {
+  if (uiState.goalsPeriodMode === 'best') {
+    const best = findBestPeriod(db, tf);
+    if (best) return best.range;
+  }
+  return currentPeriodRanges()[tf];
+}
 
 function renderFunnelSection(role, title, steps) {
-  const ranges = currentPeriodRanges();
   const tf = uiState.goalsTimeframe;
-  return renderFunnelCard(role, tf, steps, ranges[tf]);
+  return renderFunnelCard(role, tf, steps, getGoalsPeriodRange(tf));
+}
+
+/** Toggle "Periodo corrente / Migliore di sempre" per le card Obiettivi — mostrato sopra
+ * i tab Giorno/Settimana/Mese, condiviso da entrambi i funnel (Setter e Venditore). */
+function renderGoalsPeriodModeToggle() {
+  const mode = uiState.goalsPeriodMode || 'current';
+  return `
+    <div class="tf-tabs" style="margin-bottom:-2px;">
+      <button class="tf-tab ${mode === 'current' ? 'active' : ''}" data-goals-period-mode="current">Periodo corrente</button>
+      <button class="tf-tab ${mode === 'best' ? 'active' : ''}" data-goals-period-mode="best">🏆 Migliore di sempre</button>
+    </div>`;
+}
+
+/** Quando la modalità è "Migliore di sempre", mostra QUALE giorno/settimana/mese esatto
+ * si sta guardando (altrimenti sarebbe ambiguo) e il totale commissioni di quel periodo. */
+function renderBestPeriodCaption() {
+  if (uiState.goalsPeriodMode !== 'best') return '';
+  const tf = uiState.goalsTimeframe;
+  const best = findBestPeriod(db, tf);
+  if (!best) {
+    return `<div class="eyebrow">Nessuna commissione registrata ancora: mostro il periodo corrente.</div>`;
+  }
+  const label = tf === 'day' ? fmtDate(best.range.start)
+    : tf === 'week' ? `${fmtDate(best.range.start)} – ${fmtDate(best.range.end)}`
+    : best.range.start.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+  return `<div class="eyebrow">🏆 ${BEST_PERIOD_LABELS[tf]}: ${label} — €${best.total} di commissioni</div>`;
 }
 
 /** Tab Giorno/Settimana/Mese condivisi da entrambi i funnel (Setter e Venditore
@@ -631,9 +748,10 @@ function renderFunnelCard(role, timeframe, steps, range) {
   const miniSteps = steps.slice(1);
   const heroHtml = renderFunnelHero(role, timeframe, heroStep, values, goalSet);
   const miniHtml = miniSteps.map(step => renderFunnelMini(role, timeframe, step, values, goalSet, range)).join('');
+  const rowClass = miniSteps.length <= 2 ? 'v3' : (miniSteps.length === 3 ? 'v4' : '');
   return `
     <div class="card funnel-card ${role}">
-      <div class="hero-row ${miniSteps.length <= 2 ? 'v3' : ''}">
+      <div class="hero-row ${rowClass}">
         ${heroHtml}
         ${miniHtml}
       </div>
@@ -714,6 +832,12 @@ function wireDashboardTopSectionEvents() {
   appRoot.querySelectorAll('[data-goals-tf]').forEach(btn => {
     btn.addEventListener('click', () => {
       uiState.goalsTimeframe = btn.dataset.goalsTf;
+      renderDashboard();
+    });
+  });
+  appRoot.querySelectorAll('[data-goals-period-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      uiState.goalsPeriodMode = btn.dataset.goalsPeriodMode;
       renderDashboard();
     });
   });
@@ -1403,11 +1527,9 @@ function renderSessioniList() {
   }).join('') : '<p class="text-dim">Nessuna sessione registrata ancora. Inizia la prima!</p>';
 
   const activityHtml = renderCallActivitySection();
-  const recoveryEntryHtml = renderRecoveryRoundEntryCard();
 
   appRoot.innerHTML = `
     ${renderSubTabsBar('setting', 'sessioni')}
-    ${recoveryEntryHtml}
     ${activityHtml}
     <div class="section-separator"><span class="eyebrow">Elenco sessioni</span></div>
     <section class="card filters-bar">
@@ -1421,7 +1543,6 @@ function renderSessioniList() {
 
   wireSubTabsBar('setting');
   wireCallActivitySection();
-  wireRecoveryRoundEntryCard();
   document.getElementById('sessioniPipelineFilter').addEventListener('change', (e) => {
     uiState.sessioniPipelineFilter = e.target.value;
     renderSessioniList();
@@ -1528,8 +1649,8 @@ function renderCallActivitySection() {
 
     <section class="two-col">
       <div class="card">
-        <h3>Esiti nel periodo</h3>
-        <p class="text-dim">Come si chiudono le chiamate.</p>
+        <h3>Esiti nel periodo - Lead unici</h3>
+        <p class="text-dim">Come si chiudono le chiamate (un lead conta una sola volta, con l'esito del suo ultimo tentativo).</p>
         <div class="bar-list">${outcomeBars}</div>
       </div>
       <div class="card">
@@ -1702,7 +1823,11 @@ function pickNextRecoveryLead() {
   return active[0];
 }
 
-/** Card fissa in Setting > Sessioni: punto d'ingresso al round, sempre presente. */
+/**
+ * Card d'ingresso al round, sempre presente — vive in cima alla sezione Appuntamenti
+ * (riga 1 dei due "round launcher": riga 2 è renderConfirmRoundEntryCard), non più in
+ * Setting > Sessioni, su richiesta esplicita dell'utente per renderla più visibile.
+ */
 function renderRecoveryRoundEntryCard() {
   const waiting = (db.recoveryRound || []).filter(l => l.status === 'active').length;
   return `
@@ -1951,6 +2076,490 @@ function openRecoveryAppointmentModal(leadId) {
 }
 
 /* ============================================================================
+ * Round Conferme — richiama sistematicamente gli appuntamenti Setter di DOMANI non
+ * ancora confermati (presentedStatus diverso da 'confirmed24h'/'annullato'), richiesto
+ * esplicitamente dall'utente per rendere più efficace la procedura di conferma 24h
+ * prima dell'appuntamento. Due punti d'ingresso (vedi db.confirmRoundReturnMode):
+ * - "standalone": tasto dedicato in cima ad Appuntamenti (riga 2, sotto il Round
+ *   Recupero No Show) — alla fine si chiude e basta, si torna ad Appuntamenti;
+ * - "session": proposto con un Sì/No ogni volta che si avvia una sessione NORMALE
+ *   (qualunque pipeline — non il Round Recupero No Show, non una chiamata di
+ *   richiamo), SOLO se ci sono appuntamenti di domani da confermare — vedi
+ *   startSessionAction. Alla fine prosegue automaticamente nella sessione scelta
+ *   (vedi exitConfirmRound/beginPipelineSession).
+ *
+ * Le chiamate del round contano sempre come chiamate "vere" ma NON appartengono a
+ * nessuna pipeline: finiscono in una sessione automatica giornaliera dedicata
+ * ("Conferme", CONFIRM_AUTO_PIPELINE_ID) esattamente come le chiamate di richiamo fuori
+ * sessione (vedi appendCallbackCallToSession) — così restano nelle statistiche del
+ * giorno senza sporcare il mix di esiti della pipeline che si stava per chiamare.
+ *
+ * Un appuntamento chiamato 10 volte nello stesso giorno per confermarlo resta 1 LEAD
+ * solo (apt.confirmGroupId, riusato per tutte le chiamate su quell'appuntamento finché
+ * non viene spostato — vedi stesso meccanismo di computeStats già usato per i richiami).
+ * "Non risposto" ha doppio squillo (CONFIRM_MAX_CALL_ATTEMPTS=2): primo tentativo resta
+ * sullo stesso appuntamento con un banner di richiamo immediato, il secondo passa al
+ * prossimo — entrambi i tentativi contano come chiamate sullo stesso lead.
+ */
+const CONFIRM_AUTO_PIPELINE_ID = 'conferme-auto';
+const CONFIRM_AUTO_PIPELINE_NAME = 'Conferme';
+const CONFIRM_MAX_CALL_ATTEMPTS = 2;
+// Dalle 18:00 in poi, se restano appuntamenti di domani non confermati, compare il
+// banner lampeggiante in cima al tool (vedi renderConfirmAlertBanner) — soglia
+// modificabile qui in un punto solo.
+const CONFIRM_ALERT_HOUR = 18;
+// Messaggio WhatsApp precompilato per i non confermati rimasti a fine giornata — {nome}
+// e {ora} vengono sostituiti automaticamente (vedi buildWhatsAppConfirmMessage). Testo
+// esatto fornito dall'utente — "NOME" resta un placeholder letterale apposta (il tool è
+// usato da più persone di Salone Vincente, quindi non va precompilato con un nome fisso:
+// lo sostituisce a mano chi invia il messaggio). Facilmente modificabile: basta cambiare
+// questa stringa.
+const CONFIRM_WHATSAPP_TEMPLATE = 'Buonasera {nome}, sono NOME di Salone Vincente 😊\nti scrivo perché domani {ora} hai un appuntamento con uno dei nostri consulenti.\nMi confermi la tua presenza?\n\nDomani mattina ti contatterà il consulente per mandarti il link della videochiamata.';
+
+function getTomorrowDateKey() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return dateInputValue(d);
+}
+
+/** Appuntamenti Setter di domani ancora da confermare (né confermati né annullati). */
+function getPendingConfirmAppointments() {
+  const tomorrowKey = getTomorrowDateKey();
+  return db.appointments.filter(a =>
+    a.role === 'setter' &&
+    dateInputValue(a.scheduledAt) === tomorrowKey &&
+    a.presentedStatus !== 'confirmed24h' &&
+    a.presentedStatus !== 'annullato'
+  );
+}
+
+/** Stessa rotazione "equa" del Round Recupero No Show: mai mostrato -> a caso tra questi,
+ * altrimenti il meno recentemente mostrato. */
+function pickNextConfirmAppt() {
+  const pending = getPendingConfirmAppointments();
+  if (!pending.length) return null;
+  const neverShown = pending.filter(a => !a.confirmLastInteractionAt);
+  if (neverShown.length) return neverShown[Math.floor(Math.random() * neverShown.length)];
+  pending.sort((a, b) => new Date(a.confirmLastInteractionAt) - new Date(b.confirmLastInteractionAt));
+  return pending[0];
+}
+
+/** Vedi commento in cima alla sezione: le chiamate del round finiscono sempre nella
+ * sessione automatica giornaliera "Conferme", mai in db.activeSession. */
+function appendConfirmCallToSession(callRecord) {
+  const todayKey = dateInputValue(new Date());
+  let autoSession = db.sessions.find(s => s.pipelineId === CONFIRM_AUTO_PIPELINE_ID && dateInputValue(s.startedAt) === todayKey);
+  if (!autoSession) {
+    db.sessionCounter += 1;
+    autoSession = {
+      id: uid('sess'),
+      number: db.sessionCounter,
+      pipelineId: CONFIRM_AUTO_PIPELINE_ID,
+      pipelineName: CONFIRM_AUTO_PIPELINE_NAME,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      calls: [],
+      skips: 0,
+      retryCallsPending: false,
+      callAttemptsOnLead: 0,
+      pausedAt: null,
+      pausedTotalMs: 0
+    };
+    db.sessions.push(autoSession);
+  }
+  autoSession.calls.push(callRecord);
+  autoSession.endedAt = new Date().toISOString();
+}
+
+/**
+ * Card d'ingresso al Round Conferme — riga 2 dei "round launcher" in cima ad
+ * Appuntamenti, sotto quella del Round Recupero No Show (vedi renderAppuntamenti).
+ */
+function renderConfirmRoundEntryCard() {
+  const waiting = getPendingConfirmAppointments().length;
+  return `
+    <section class="card recov-entry-card confirm-variant">
+      <div class="recov-entry-info">
+        <h3>✅ Round Conferme</h3>
+        <p class="text-dim" style="font-size:0.84rem;">Richiama gli appuntamenti di domani ancora da confermare, uno alla volta, finché non sono tutti confermati (24h prima).</p>
+      </div>
+      <div class="recov-entry-action">
+        <div class="recov-entry-count">${waiting}</div>
+        <div class="recov-entry-count-label">da confermare</div>
+        <button class="btn-primary" id="btnStartConfirmRoundStandalone">${waiting ? 'Inizia round' : 'Apri round'}</button>
+      </div>
+    </section>`;
+}
+
+function wireConfirmRoundEntryCard() {
+  const btn = document.getElementById('btnStartConfirmRoundStandalone');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    db.confirmRoundActive = true;
+    db.confirmRoundCurrentApptId = null;
+    db.confirmRoundReturnMode = 'standalone';
+    db.confirmRoundPendingPipelineId = null;
+    persist();
+    renderRoute();
+  });
+}
+
+/**
+ * Sì/No proposto appena si prova ad avviare una sessione normale, SOLO se ci sono
+ * appuntamenti di domani da confermare (vedi startSessionAction). "Sì" apre il round in
+ * modalità "session": alla fine prosegue automaticamente nella pipeline scelta.
+ */
+function openConfirmRoundPromptModal(pipelineId, count) {
+  openModal(`
+    <h3>Round di conferme</h3>
+    <p>Hai <strong>${count}</strong> appuntament${count === 1 ? 'o' : 'i'} di domani ancora da confermare. Vuoi farlo ora, prima di iniziare la sessione?</p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="confirmRoundNoBtn">No, vai alla sessione</button>
+      <button class="btn-primary" id="confirmRoundYesBtn">Sì, fai il round</button>
+    </div>
+  `);
+  document.getElementById('confirmRoundNoBtn').addEventListener('click', () => {
+    closeModal();
+    beginPipelineSession(pipelineId);
+  });
+  document.getElementById('confirmRoundYesBtn').addEventListener('click', () => {
+    closeModal();
+    db.confirmRoundActive = true;
+    db.confirmRoundCurrentApptId = null;
+    db.confirmRoundReturnMode = 'session';
+    db.confirmRoundPendingPipelineId = pipelineId;
+    persist();
+    renderRoute();
+  });
+}
+
+/**
+ * Schermata a schermo intero del Round Conferme (stesso linguaggio visivo di
+ * renderSessioneAttiva/renderRecoveryRoundScreen: .session-screen/.outcome-grid).
+ */
+function renderConfirmRoundScreen() {
+  document.body.classList.add('in-session');
+  const pending = getPendingConfirmAppointments();
+
+  let apt = db.confirmRoundCurrentApptId ? pending.find(a => a.id === db.confirmRoundCurrentApptId) : null;
+  if (!apt) {
+    apt = pickNextConfirmAppt();
+    db.confirmRoundCurrentApptId = apt ? apt.id : null;
+    persist();
+  }
+
+  if (!apt) {
+    appRoot.innerHTML = `
+      <div class="session-screen">
+        <div class="session-topbar">
+          <button id="btnExitConfirmRound" class="btn-danger-ghost">■ Esci dal round</button>
+          <div class="session-pipeline-name">✅ Round Conferme</div>
+          <div></div>
+        </div>
+        <div class="card" style="text-align:center; padding:60px 20px;">
+          <h2>Tutto confermato 🎉</h2>
+          <p class="text-dim">Non ci sono appuntamenti di domani ancora da confermare.</p>
+        </div>
+      </div>`;
+    document.getElementById('btnExitConfirmRound').addEventListener('click', exitConfirmRound);
+    return;
+  }
+
+  const attemptNum = (apt.confirmCallAttempts || 0) + 1;
+  const retryBannerHtml = apt.confirmRetryPending ? `
+    <div class="second-call-banner">
+      <span class="blink-dot"></span>Richiamo subito — ${attemptNum}ª chiamata, stesso appuntamento
+      <span class="scb-hint">Doppio squillo massimo: al prossimo "Non risposto" si passa avanti.</span>
+    </div>` : '';
+
+  appRoot.innerHTML = `
+    <div class="session-screen">
+      <div class="session-topbar">
+        <button id="btnExitConfirmRound" class="btn-danger-ghost">■ Esci dal round</button>
+        <div class="session-pipeline-name">✅ Round Conferme</div>
+        <div class="session-topbar-right">
+          <button id="btnConfirmSkip" class="btn-skip">Skip →</button>
+        </div>
+      </div>
+
+      <div class="card recov-hero">
+        <div class="recov-hero-name">${escapeHtml(apt.clientName || '(senza nome)')}</div>
+        <div class="recov-hero-phone-row">
+          <span class="confirm-hero-phone">${apt.phone ? escapeHtml(apt.phone) : 'Nessun numero salvato'}</span>
+          ${apt.phone ? `<button class="crm-copy-phone-btn" id="btnCopyConfirmPhone" title="Copia numero">⧉</button>` : ''}
+        </div>
+        <div class="confirm-hero-when">${fmtRelativeDayTime(apt.scheduledAt)}</div>
+      </div>
+
+      ${retryBannerHtml}
+
+      <div class="outcome-grid">
+        <button class="outcome-btn" data-confirm-outcome="confermato">Confermato 24h</button>
+        <button class="outcome-btn" data-confirm-outcome="spostato">Appuntamento spostato<span class="outcome-btn-sub">cambia data/ora</span></button>
+        <button class="outcome-btn outcome-btn-danger" data-confirm-outcome="annullato">Annullato</button>
+        <button class="outcome-btn" data-confirm-outcome="non_risposto">Non risposto<span class="outcome-btn-sub">doppio squillo</span></button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btnExitConfirmRound').addEventListener('click', exitConfirmRound);
+  document.getElementById('btnConfirmSkip').addEventListener('click', () => skipConfirmAppt(apt.id));
+
+  const copyBtn = document.getElementById('btnCopyConfirmPhone');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const ok = await copyToClipboard(apt.phone);
+      showToast(ok ? 'Numero copiato.' : 'Seleziona e copia manualmente.', !ok);
+    });
+  }
+
+  appRoot.querySelectorAll('[data-confirm-outcome]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const outcome = btn.dataset.confirmOutcome;
+      if (outcome === 'spostato') { openConfirmMoveModal(apt.id); return; }
+      if (outcome === 'annullato') {
+        showConfirm(`Annullare l'appuntamento di "${escapeHtml(apt.clientName || '(senza nome)')}"?`, () => {
+          applyConfirmOutcome(apt.id, 'annullato');
+        }, { confirmLabel: 'Annulla appuntamento' });
+        return;
+      }
+      applyConfirmOutcome(apt.id, outcome);
+    });
+  });
+}
+
+function exitConfirmRound() {
+  const mode = db.confirmRoundReturnMode;
+  const pendingPid = db.confirmRoundPendingPipelineId;
+  db.confirmRoundActive = false;
+  db.confirmRoundCurrentApptId = null;
+  db.confirmRoundReturnMode = null;
+  db.confirmRoundPendingPipelineId = null;
+  persist();
+  document.body.classList.remove('in-session');
+  if (mode === 'session' && pendingPid) {
+    beginPipelineSession(pendingPid);
+  } else {
+    location.hash = '#/setting-appuntamenti';
+    renderRoute();
+  }
+}
+
+/** Skip: passa al prossimo senza che conti come chiamata (ma lo "tocca" ai fini della
+ * rotazione, altrimenti ricomparirebbe subito). */
+function skipConfirmAppt(apptId) {
+  const apt = db.appointments.find(a => a.id === apptId);
+  if (apt) {
+    apt.confirmLastInteractionAt = new Date().toISOString();
+    apt.confirmCallAttempts = 0;
+    apt.confirmRetryPending = false;
+  }
+  db.confirmRoundCurrentApptId = null;
+  persist();
+  renderConfirmRoundScreen();
+}
+
+/**
+ * Applica l'esito di una chiamata di conferma e logga SEMPRE la chiamata (vedi
+ * appendConfirmCallToSession) — tutti e tre gli esiti qui dentro sono vere chiamate.
+ * - confermato/annullato: l'appuntamento esce dal pool (presentedStatus aggiornato).
+ * - non_risposto: doppio squillo (CONFIRM_MAX_CALL_ATTEMPTS) — resta sullo stesso
+ *   appuntamento al primo tentativo, passa al prossimo al secondo.
+ */
+function applyConfirmOutcome(apptId, outcome) {
+  const apt = db.appointments.find(a => a.id === apptId);
+  if (!apt) return;
+  if (!apt.confirmGroupId) apt.confirmGroupId = uid('lead');
+  const now = new Date().toISOString();
+  const isRetryAttempt = !!apt.confirmRetryPending;
+
+  if (outcome === 'confermato') {
+    appendConfirmCallToSession({
+      id: uid('call'), timestamp: now, outcomeId: null, outcomeLabel: 'Confermato 24h',
+      isConversion: true, isNoAnswer: false, isSecondAttempt: isRetryAttempt,
+      groupId: apt.confirmGroupId, isConfirmCall: true
+    });
+    apt.presentedStatus = 'confirmed24h';
+    apt.presentedAt = apt.scheduledAt;
+    deactivateRecoveryEntryForAppointment(apt);
+    apt.confirmLastInteractionAt = now;
+    apt.confirmCallAttempts = 0;
+    apt.confirmRetryPending = false;
+    db.confirmRoundCurrentApptId = null;
+    persist();
+    showToast('Appuntamento confermato.');
+    renderConfirmRoundScreen();
+    return;
+  }
+
+  if (outcome === 'annullato') {
+    appendConfirmCallToSession({
+      id: uid('call'), timestamp: now, outcomeId: null, outcomeLabel: 'Annullato',
+      isConversion: false, isNoAnswer: false, isSecondAttempt: isRetryAttempt,
+      groupId: apt.confirmGroupId, isConfirmCall: true
+    });
+    apt.presentedStatus = 'annullato';
+    deactivateRecoveryEntryForAppointment(apt);
+    apt.confirmLastInteractionAt = now;
+    apt.confirmCallAttempts = 0;
+    apt.confirmRetryPending = false;
+    db.confirmRoundCurrentApptId = null;
+    persist();
+    showToast('Appuntamento annullato.');
+    renderConfirmRoundScreen();
+    return;
+  }
+
+  if (outcome === 'non_risposto') {
+    appendConfirmCallToSession({
+      id: uid('call'), timestamp: now, outcomeId: null, outcomeLabel: 'Non risposto',
+      isConversion: false, isNoAnswer: true, isSecondAttempt: isRetryAttempt,
+      groupId: apt.confirmGroupId, isConfirmCall: true
+    });
+    const attemptsSoFar = isRetryAttempt ? (apt.confirmCallAttempts || 1) + 1 : 1;
+    apt.confirmLastInteractionAt = now;
+    if (attemptsSoFar < CONFIRM_MAX_CALL_ATTEMPTS) {
+      apt.confirmCallAttempts = attemptsSoFar;
+      apt.confirmRetryPending = true;
+      // db.confirmRoundCurrentApptId resta invariato: stesso appuntamento al prossimo render.
+    } else {
+      apt.confirmCallAttempts = 0;
+      apt.confirmRetryPending = false;
+      db.confirmRoundCurrentApptId = null;
+    }
+    persist();
+    renderConfirmRoundScreen();
+  }
+}
+
+/** "Appuntamento spostato": chiede la nuova data/ora, logga la chiamata, sposta
+ * scheduledAt e azzera lo stato di rotazione/gruppo (è di fatto un nuovo slot). */
+function openConfirmMoveModal(apptId) {
+  const apt = db.appointments.find(a => a.id === apptId);
+  if (!apt) return;
+  const currentVal = (apt.scheduledAt || '').slice(0, 16);
+
+  openModal(`
+    <h3>Appuntamento spostato</h3>
+    <p class="text-dim" style="font-size:0.85rem;">A quando è stato spostato l'appuntamento di "${escapeHtml(apt.clientName || '(senza nome)')}"?</p>
+    <label class="field">Nuova data e ora<input type="datetime-local" id="confirmMoveWhen" value="${currentVal}"></label>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="confirmMoveCancelBtn">Annulla</button>
+      <button class="btn-primary" id="confirmMoveConfirmBtn">Salva</button>
+    </div>
+  `);
+
+  document.getElementById('confirmMoveCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('confirmMoveConfirmBtn').addEventListener('click', () => {
+    const when = document.getElementById('confirmMoveWhen').value;
+    if (!when) { showToast('Inserisci la nuova data e ora.', true); return; }
+
+    if (!apt.confirmGroupId) apt.confirmGroupId = uid('lead');
+    appendConfirmCallToSession({
+      id: uid('call'), timestamp: new Date().toISOString(), outcomeId: null, outcomeLabel: 'Appuntamento spostato',
+      isConversion: false, isNoAnswer: false, isSecondAttempt: !!apt.confirmRetryPending,
+      groupId: apt.confirmGroupId, isConfirmCall: true
+    });
+
+    apt.scheduledAt = when;
+    // Nuovo slot -> si riparte da zero su gruppo/tentativi/rotazione per questo appuntamento.
+    apt.confirmGroupId = null;
+    apt.confirmCallAttempts = 0;
+    apt.confirmRetryPending = false;
+    apt.confirmLastInteractionAt = null;
+
+    db.confirmRoundCurrentApptId = null;
+    persist();
+    closeModal();
+    showToast('Appuntamento spostato.');
+    renderConfirmRoundScreen();
+  });
+}
+
+/**
+ * "alle 9" se l'appuntamento è in punto, "alle 9:30" altrimenti — italiano naturale da
+ * messaggio, invece del formato fisso "09:00" usato nel resto del tool (vedi
+ * buildWhatsAppConfirmMessage, richiesto esplicitamente dall'utente come "ora
+ * dell'appuntamento in italiano corretto").
+ */
+function fmtItalianHourPhrase(d) {
+  const target = new Date(d);
+  const h = target.getHours();
+  const m = target.getMinutes();
+  return m === 0 ? `alle ${h}` : `alle ${h}:${String(m).padStart(2, '0')}`;
+}
+
+/** Messaggio WhatsApp precompilato per un appuntamento non confermato (vedi
+ * renderConfirmAlertBanner) — {nome} usa solo il primo nome per un tono più diretto. */
+function buildWhatsAppConfirmMessage(apt) {
+  const firstName = (apt.clientName || '').trim().split(/\s+/)[0] || '';
+  const orarioPhrase = fmtItalianHourPhrase(apt.scheduledAt);
+  return CONFIRM_WHATSAPP_TEMPLATE.replace('{nome}', firstName).replace('{ora}', orarioPhrase);
+}
+
+/**
+ * Banner fisso lampeggiante ("ci sono ancora conferme da fare"), mostrato dalle 18:00
+ * (CONFIRM_ALERT_HOUR) in poi se restano appuntamenti di domani non confermati — vive
+ * fuori da #app, subito sotto il topbar, così è visibile su qualunque schermata (tranne
+ * durante una sessione/round a schermo intero, dove si nasconde via CSS .in-session).
+ * Espandibile: elenco con nome/telefono/orario e un tasto per copiare un messaggio
+ * WhatsApp precompilato pronto da incollare (vedi buildWhatsAppConfirmMessage).
+ */
+function renderConfirmAlertBanner() {
+  const pending = getPendingConfirmAppointments();
+  const show = pending.length > 0 && new Date().getHours() >= CONFIRM_ALERT_HOUR;
+  let el = document.getElementById('confirmAlertBanner');
+
+  if (!show) {
+    if (el) el.remove();
+    return;
+  }
+
+  const wasOpen = el ? el.classList.contains('open') : false;
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'confirmAlertBanner';
+    el.className = 'confirm-alert-banner';
+    const topbar = document.getElementById('topbar');
+    topbar.insertAdjacentElement('afterend', el);
+  }
+
+  const sorted = [...pending].sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
+  const itemsHtml = sorted.map(a => `
+    <div class="confirm-alert-item">
+      <div class="confirm-alert-item-main">
+        <span class="confirm-alert-item-name">${escapeHtml(a.clientName || '(senza nome)')}</span>
+        <span class="confirm-alert-item-phone">${a.phone ? escapeHtml(a.phone) : 'nessun numero'}</span>
+      </div>
+      <span class="confirm-alert-item-time">${fmtRelativeDayTime(a.scheduledAt)}</span>
+      <button class="btn-ghost confirm-alert-copy-btn" data-copy-wa="${a.id}">📋 Copia messaggio</button>
+    </div>`).join('');
+
+  el.classList.toggle('open', wasOpen);
+  el.innerHTML = `
+    <button class="confirm-alert-toggle" id="confirmAlertToggle">
+      <span class="blink-dot"></span>
+      <span>Hai ${pending.length} appuntament${pending.length === 1 ? 'o' : 'i'} di domani non confermat${pending.length === 1 ? 'o' : 'i'}!</span>
+      <span class="confirm-alert-chevron">▾</span>
+    </button>
+    <div class="confirm-alert-list">${itemsHtml}</div>
+  `;
+
+  document.getElementById('confirmAlertToggle').addEventListener('click', () => {
+    el.classList.toggle('open');
+  });
+  el.querySelectorAll('[data-copy-wa]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const apt = db.appointments.find(a => a.id === btn.dataset.copyWa);
+      if (!apt) return;
+      const msg = buildWhatsAppConfirmMessage(apt);
+      const ok = await copyToClipboard(msg);
+      showToast(ok ? 'Messaggio copiato: incollalo su WhatsApp.' : 'Seleziona e copia manualmente.', !ok);
+    });
+  });
+}
+
+/* ============================================================================
  * Appuntamenti (mini-CRM) — sistema parallelo alle sessioni/pipeline di chiamata
  * outbound qui sopra. Non condivide dati con esse: solo la stessa app/topbar.
  * ==========================================================================*/
@@ -1987,7 +2596,11 @@ function newAppointment(role) {
     notes: [],                // solo Venditore — { id, text, author, createdAt }
     nextFollowUpDate: null,   // solo Venditore — YYYY-MM-DD (solo data, non ora)
     recoveredFromNoShow: false, // true se creato dal Round Recupero No Show
-    recoveredFromRole: null     // 'setter' | 'venditore' — ruolo in cui è avvenuto il no-show originale
+    recoveredFromRole: null,    // 'setter' | 'venditore' — ruolo in cui è avvenuto il no-show originale
+    confirmGroupId: null,       // vedi Round Conferme più sotto
+    confirmCallAttempts: 0,
+    confirmRetryPending: false,
+    confirmLastInteractionAt: null
   };
 }
 
@@ -2067,8 +2680,18 @@ function renderAppuntamenti() {
   const rowsHtml = rows.length ? rows.map(renderApptRow).join('') : '';
   const noResults = search.trim() && !rows.length;
 
+  // "Round launcher" — i due round a schermo intero (No Show / Conferme), spostati qui
+  // in cima su richiesta esplicita dell'utente perché più visibili: riga 1 No Show,
+  // riga 2 Conferme (vedi renderRecoveryRoundEntryCard/renderConfirmRoundEntryCard).
+  const roundLaunchersHtml = `
+    <div class="round-launchers">
+      ${renderRecoveryRoundEntryCard()}
+      ${renderConfirmRoundEntryCard()}
+    </div>`;
+
   appRoot.innerHTML = `
     ${renderSubTabsBar('setting', 'appuntamenti')}
+    ${roundLaunchersHtml}
     <section class="card crm-toolbar">
       <div class="crm-filters">
         <button class="pill ${filter === 'all' ? 'active' : ''}" data-crm-setter-filter="all">Tutti</button>
@@ -2080,6 +2703,7 @@ function renderAppuntamenti() {
       <div style="display:flex; gap:8px;">
         <button class="btn-ghost" id="btnApptCalendar">📅 Calendario</button>
         <button class="btn-ghost" id="btnApptReport">Report</button>
+        <button class="btn-ghost" id="btnOpenCallbacks">📞 Da richiamare${(db.callbacks || []).filter(c => c.status === 'pending').length ? ` (${(db.callbacks || []).filter(c => c.status === 'pending').length})` : ''}</button>
         <button class="btn-primary" id="btnNewAppt">+ Nuovo Appuntamento</button>
       </div>
     </section>
@@ -2159,6 +2783,7 @@ function renderApptRow(a) {
         <button class="crm-chip ${a.presentedStatus === 'confirmed24h' ? 'active' : ''}" data-set-presented="${a.id}" data-val="confirmed24h">Confermato24h</button>
         <button class="crm-chip ${a.presentedStatus === 'presented' ? 'active' : ''}" data-set-presented="${a.id}" data-val="presented">Presentato</button>
         <button class="crm-chip danger-chip ${a.presentedStatus === 'no_show' ? 'active' : ''}" data-set-presented="${a.id}" data-val="no_show">No Show</button>
+        <button class="crm-chip annullato-chip ${a.presentedStatus === 'annullato' ? 'active' : ''}" data-set-presented="${a.id}" data-val="annullato">Annullato</button>
       </div>`;
 
   const closedChips = `
@@ -2199,8 +2824,11 @@ function wireAppuntamentiEvents() {
   document.getElementById('btnNewAppt').addEventListener('click', () => {
     addBlankAppointmentRow('setter');
   });
+  document.getElementById('btnOpenCallbacks').addEventListener('click', openCallbacksListModal);
   document.getElementById('btnApptReport').addEventListener('click', generateAppointmentsReport);
   document.getElementById('btnApptCalendar').addEventListener('click', () => openAppointmentsCalendarModal('setter'));
+  wireRecoveryRoundEntryCard();
+  wireConfirmRoundEntryCard();
 
   appRoot.querySelectorAll('[data-name-input]').forEach(input => {
     input.addEventListener('change', () => {
@@ -3041,9 +3669,10 @@ const SETTER_PRESENTED_COLOR_CLASS = {
   no: 'cal-appt-neutral',
   confirmed24h: 'cal-appt-confirmed',
   presented: 'cal-appt-presented',
-  no_show: 'cal-appt-noshow'
+  no_show: 'cal-appt-noshow',
+  annullato: 'cal-appt-annullato'
 };
-const SETTER_PRESENTED_LABEL = { no: 'No', confirmed24h: 'Confermato24h', presented: 'Presentato', no_show: 'No Show' };
+const SETTER_PRESENTED_LABEL = { no: 'No', confirmed24h: 'Confermato24h', presented: 'Presentato', no_show: 'No Show', annullato: 'Annullato' };
 
 let calModalRole = 'setter';
 let calModalMonthOffset = 0;
@@ -3209,39 +3838,53 @@ function renderSessioneAttiva() {
     </div>
   ` : '';
 
+  // Lead "Da richiamare" creati IN QUESTA sessione, ancora in attesa (status 'pending'),
+  // in ordine cronologico per data/ora di richiamo — richiesto esplicitamente dall'utente,
+  // indipendentemente dal fatto che siano programmati per oggi o per un giorno futuro.
+  const sessionCallbacks = (db.callbacks || [])
+    .filter(c => c.sourceSessionId === s.id && c.status === 'pending')
+    .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
+  const sidebarHtml = sessionCallbacks.length ? renderSessionCallbackSidebar(sessionCallbacks) : '';
+
   appRoot.innerHTML = `
     <div class="session-screen${isPaused ? ' is-paused' : ''}">
-      <div class="session-topbar">
-        <button id="btnEndSession" class="btn-danger-ghost">■ Fine sessione</button>
-        <div class="session-pipeline-name">${escapeHtml(s.pipelineName)}</div>
-        <div class="session-topbar-right">
-          <button id="btnPauseSession" class="btn-pause${isPaused ? ' is-paused' : ''}">${isPaused ? '▶ Riprendi' : '⏸ Pausa'}</button>
-          <button id="btnSkip" class="btn-skip">Skip →</button>
+      <div class="session-body">
+        ${sidebarHtml}
+        <div class="session-main-col">
+          <div class="session-topbar">
+            <button id="btnEndSession" class="btn-danger-ghost">■ Fine sessione</button>
+            <div class="session-pipeline-name">${escapeHtml(s.pipelineName)}</div>
+            <div class="session-topbar-right">
+              <button id="btnMinimizeSession" class="btn-skip" title="La sessione resta attiva: puoi rientrare quando vuoi">↩ Esci</button>
+              <button id="btnPauseSession" class="btn-pause${isPaused ? ' is-paused' : ''}">${isPaused ? '▶ Riprendi' : '⏸ Pausa'}</button>
+              <button id="btnSkip" class="btn-skip">Skip →</button>
+            </div>
+          </div>
+
+          <div class="session-stats">
+            <div class="stat-block">
+              <div class="stat-value" id="sessionTimer">00:00</div>
+              <div class="stat-label">Durata sessione${isPaused ? ' (in pausa)' : ''}</div>
+            </div>
+            <div class="stat-block">
+              <div class="stat-value">${totalCalls}</div>
+              <div class="stat-label">Chiamate fatte</div>
+            </div>
+            <div class="stat-block">
+              <div class="stat-value">${totalLeads}</div>
+              <div class="stat-label">Lead contattati</div>
+            </div>
+            ${s.skips ? `<div class="stat-block"><div class="stat-value">${s.skips}</div><div class="stat-label">Saltati</div></div>` : ''}
+          </div>
+
+          ${pauseBannerHtml}
+          ${secondCallBannerHtml}
+
+          <div class="session-breakdown">${breakdownHtml}</div>
+
+          <div class="outcome-grid">${buttonsHtml}</div>
         </div>
       </div>
-
-      <div class="session-stats">
-        <div class="stat-block">
-          <div class="stat-value" id="sessionTimer">00:00</div>
-          <div class="stat-label">Durata sessione${isPaused ? ' (in pausa)' : ''}</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-value">${totalCalls}</div>
-          <div class="stat-label">Chiamate fatte</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-value">${totalLeads}</div>
-          <div class="stat-label">Lead contattati</div>
-        </div>
-        ${s.skips ? `<div class="stat-block"><div class="stat-value">${s.skips}</div><div class="stat-label">Saltati</div></div>` : ''}
-      </div>
-
-      ${pauseBannerHtml}
-      ${secondCallBannerHtml}
-
-      <div class="session-breakdown">${breakdownHtml}</div>
-
-      <div class="outcome-grid">${buttonsHtml}</div>
     </div>
   `;
 
@@ -3251,10 +3894,34 @@ function renderSessioneAttiva() {
   document.getElementById('btnSkip').addEventListener('click', () => { if (!db.activeSession.pausedAt) skipLeadAction(); });
   document.getElementById('btnEndSession').addEventListener('click', endSessionAction);
   document.getElementById('btnPauseSession').addEventListener('click', toggleSessionPause);
+  document.getElementById('btnMinimizeSession').addEventListener('click', () => {
+    uiState.sessionMinimized = true;
+    location.hash = '#/dashboard';
+    renderRoute();
+  });
+  appRoot.querySelectorAll('[data-call-callback]').forEach(btn => {
+    btn.addEventListener('click', () => { if (!db.activeSession.pausedAt) startCallbackCall(btn.dataset.callCallback); });
+  });
 
   clearInterval(sessionTimerInterval);
   updateSessionTimer();
   sessionTimerInterval = setInterval(updateSessionTimer, 1000);
+}
+
+/** Colonna laterale "Da richiamare in questa sessione" — vedi renderSessioneAttiva. */
+function renderSessionCallbackSidebar(sessionCallbacks) {
+  const itemsHtml = sessionCallbacks.map(cb => `
+    <div class="session-callback-item">
+      <div class="session-callback-item-name">${escapeHtml(cb.leadName)}</div>
+      ${cb.phone ? `<div class="session-callback-item-phone">${escapeHtml(cb.phone)}</div>` : ''}
+      <div class="session-callback-item-when">${fmtDateTime(cb.scheduledAt)}</div>
+      <button class="btn-ghost session-callback-item-btn" data-call-callback="${cb.id}">Chiama</button>
+    </div>`).join('');
+  return `
+    <aside class="session-callback-sidebar">
+      <div class="session-callback-sidebar-title">Da richiamare in questa sessione</div>
+      ${itemsHtml}
+    </aside>`;
 }
 
 /**
@@ -3294,6 +3961,10 @@ function updateSessionTimer() {
 // "conferma appuntamento" (altro isConversion:true) o un esito custom non lo attivano mai.
 const APPOINTMENT_SET_OUTCOME_LABEL = 'Appuntamento Fissato';
 
+// Stesso principio per l'esito "Da richiamare": solo questa label esatta apre la tendina
+// per programmare un richiamo (nome/telefono + quando) — vedi openCallbackModal.
+const CALLBACK_OUTCOME_LABEL = 'Da richiamare';
+
 // Numero massimo di tentativi TOTALI sullo stesso lead quando l'esito è "nessuna risposta"
 // (es. squilli a vuoto). 1 = nessun richiamo (si passa subito al lead successivo dopo il
 // primo "non risponde"), 2 = un richiamo (2 chiamate totali, comportamento storico), 3 = due
@@ -3311,15 +3982,24 @@ function logCallAction(outcomeId) {
   // STESSO lead (non un lead nuovo), qualunque sia l'esito di questa chiamata.
   const isRetryAttempt = (s.retryCallsPending || 0) > 0;
 
-  s.calls.push({
+  // groupId: identifica univocamente "questo lead" a prescindere dalla posizione nell'array
+  // (vedi computeStats in utils.js) — un nuovo lead riceve un id nuovo, un tentativo di
+  // richiamo immediato (isRetryAttempt) riusa quello del lead corrente. Serve anche per
+  // collegare correttamente, più avanti nel tempo, l'eventuale chiamata di richiamo fatta
+  // da un lead "Da richiamare" (vedi logCallbackCall/appendCallbackCallToSession).
+  if (!isRetryAttempt) s.currentLeadGroupId = uid('lead');
+
+  const callRecord = {
     id: uid('call'),
     timestamp: new Date().toISOString(),
     outcomeId: outcome.id,
     outcomeLabel: outcome.label,
     isConversion: !!outcome.isConversion,
     isNoAnswer: !!outcome.isNoAnswer,
-    isSecondAttempt: isRetryAttempt
-  });
+    isSecondAttempt: isRetryAttempt,
+    groupId: s.currentLeadGroupId
+  };
+  s.calls.push(callRecord);
 
   // Quanti tentativi abbiamo già fatto su questo lead in questo giro (1 = solo la chiamata
   // appena fatta, oppure quelli precedenti +1 se eravamo già in un richiamo).
@@ -3333,13 +4013,22 @@ function logCallAction(outcomeId) {
   if (!canRetry) s.callAttemptsOnLead = 0;
 
   // La chiamata è già registrata a prescindere da quel che succede dopo (persist() qui sotto):
-  // il popup "Appuntamento Fissato" (se scatta) è un'aggiunta al CRM, non deve mai poter
-  // bloccare o alterare il conteggio normale della sessione.
+  // i popup "Appuntamento Fissato"/"Da richiamare" (se scattano) sono un'aggiunta al CRM/ai
+  // richiami, non devono mai poter bloccare o alterare il conteggio normale della sessione.
   persist();
   renderSessioneAttiva();
 
   if (outcome.label === APPOINTMENT_SET_OUTCOME_LABEL) {
     openAppointmentSetModal();
+  } else if (outcome.label === CALLBACK_OUTCOME_LABEL) {
+    openCallbackModal({
+      mode: 'create',
+      groupId: callRecord.groupId,
+      sourceSessionId: s.id,
+      sourcePipelineId: pipeline.id,
+      sourcePipelineName: pipeline.name,
+      afterSave: renderSessioneAttiva
+    });
   }
 }
 
@@ -3414,12 +4103,398 @@ function endSessionAction() {
     s.endedAt = new Date().toISOString();
     db.sessions.push(s);
     db.activeSession = null;
+    uiState.sessionMinimized = false;
     persist();
     clearInterval(sessionTimerInterval);
     document.body.classList.remove('in-session');
     location.hash = '#/sessioni/' + s.id;
     renderRoute();
   }, { confirmLabel: 'Termina sessione' });
+}
+
+/* ============================================================================
+ * "Da richiamare" — lead da richiamare programmati durante una sessione (tasto esito
+ * "Da richiamare" — vedi logCallAction) o riprogrammati dalla schermata di richiamo
+ * stessa (vedi logCallbackCall). Due punti d'accesso per richiamarli:
+ * - la colonna laterale della sessione in cui sono nati (vedi renderSessionCallbackSidebar),
+ *   finché quella sessione resta aperta;
+ * - l'elenco completo in Setting > Appuntamenti (vedi openCallbacksListModal), accessibile
+ *   in qualunque momento, anche a sessione chiusa o giorni dopo.
+ * In entrambi i casi il tasto "Chiama" apre la STESSA schermata a schermo intero
+ * (renderCallbackCallScreen, presa in carico da renderRoute() tramite db.callbackCallActiveId
+ * con priorità sulla sessione attiva — vedi lì).
+ * ==========================================================================*/
+
+// Pipeline "virtuale" usata per le chiamate di richiamo fatte SENZA una sessione attiva in
+// quel momento (es. si richiama il giorno dopo, da Setting): non esiste in db.pipelines,
+// serve solo per avere una sessione in cui accodare la chiamata ai fini delle statistiche
+// (chiamate fatte/lead contattati del giorno) — vedi appendCallbackCallToSession.
+const CALLBACK_AUTO_PIPELINE_ID = 'richiami-auto';
+const CALLBACK_AUTO_PIPELINE_NAME = 'Richiami';
+
+// "Doppio squillo, non triplo" per le chiamate di richiamo, richiesto esplicitamente
+// dall'utente — a differenza di MAX_CALL_ATTEMPTS (3) usato nelle sessioni normali.
+const CALLBACK_MAX_CALL_ATTEMPTS = 2;
+
+/**
+ * Aggiunge una chiamata di richiamo alla sessione "giusta" ai fini delle statistiche:
+ * - se c'è una sessione attiva in questo momento (db.activeSession, qualunque pipeline),
+ *   la chiamata entra lì, esattamente come una chiamata normale;
+ * - altrimenti entra nella sessione automatica "Richiami" DI OGGI (una per giorno,
+ *   creata al bisogno) in db.sessions, così compare comunque nelle statistiche del
+ *   giorno in cui la fai davvero, non in quelle della sessione/giorno in cui il lead
+ *   era stato originariamente creato.
+ */
+function appendCallbackCallToSession(callRecord) {
+  if (db.activeSession) {
+    db.activeSession.calls.push(callRecord);
+    return;
+  }
+  const todayKey = dateInputValue(new Date());
+  let autoSession = db.sessions.find(s => s.pipelineId === CALLBACK_AUTO_PIPELINE_ID && dateInputValue(s.startedAt) === todayKey);
+  if (!autoSession) {
+    db.sessionCounter += 1;
+    autoSession = {
+      id: uid('sess'),
+      number: db.sessionCounter,
+      pipelineId: CALLBACK_AUTO_PIPELINE_ID,
+      pipelineName: CALLBACK_AUTO_PIPELINE_NAME,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      calls: [],
+      skips: 0,
+      retryCallsPending: false,
+      callAttemptsOnLead: 0,
+      pausedAt: null,
+      pausedTotalMs: 0
+    };
+    db.sessions.push(autoSession);
+  }
+  autoSession.calls.push(callRecord);
+  autoSession.endedAt = new Date().toISOString();
+}
+
+/** Avvia il flusso "Chiama" per un lead "Da richiamare": decide il groupId da usare per
+ * questa chiamata (vedi commento su computeStats in utils.js) e apre la schermata. */
+function startCallbackCall(callbackId) {
+  const cb = (db.callbacks || []).find(c => c.id === callbackId);
+  if (!cb) return;
+  const todayKey = dateInputValue(new Date());
+  cb.inCallGroupId = (cb.createdDateKey === todayKey) ? cb.leadGroupId : uid('lead');
+  cb.inCallAttempts = 0;
+  cb.inCallRetryPending = false;
+  db.callbackCallActiveId = cb.id;
+  persist();
+  renderRoute();
+}
+
+/**
+ * Schermata a schermo intero "Chiama" per un singolo lead "Da richiamare" — stesso
+ * linguaggio visivo delle sessioni normali (.session-screen/.session-topbar/.outcome-grid),
+ * ma per UN lead solo, non per una pipeline intera. Presa in carico da renderRoute() con
+ * priorità sulla sessione attiva (se presente, resta "in pausa" finché non si esce da qui).
+ * Gli esiti sono quelli della pipeline di origine del lead (quella in cui è nato come "Da
+ * richiamare"), così restano coerenti con gli esiti già visti durante la sessione originale.
+ */
+function renderCallbackCallScreen() {
+  document.body.classList.add('in-session');
+  const cb = (db.callbacks || []).find(c => c.id === db.callbackCallActiveId);
+  if (!cb) { db.callbackCallActiveId = null; renderRoute(); return; }
+
+  const pipeline = db.pipelines.find(p => p.id === cb.sourcePipelineId);
+  const outcomes = pipeline ? pipeline.outcomes : defaultOutcomesList();
+
+  const attemptNum = (cb.inCallAttempts || 0) + 1;
+  const retryBannerHtml = cb.inCallRetryPending ? `
+    <div class="second-call-banner">
+      <span class="blink-dot"></span>Richiamo ${attemptNum}ª chiamata — stesso lead
+      <span class="scb-hint">Segna l'esito di questo tentativo (max ${CALLBACK_MAX_CALL_ATTEMPTS} tentativi per i richiami).</span>
+    </div>` : '';
+
+  const buttonsHtml = outcomes.map(o => `
+    <button class="outcome-btn" data-cb-outcome-id="${o.id}">
+      ${escapeHtml(o.label)}
+      ${o.isNoAnswer && CALLBACK_MAX_CALL_ATTEMPTS > 1 ? `<span class="outcome-btn-sub">attiva richiamo (max ${CALLBACK_MAX_CALL_ATTEMPTS} tentativi)</span>` : ''}
+    </button>`).join('');
+
+  appRoot.innerHTML = `
+    <div class="session-screen">
+      <div class="session-topbar">
+        <button id="btnExitCallbackCall" class="btn-danger-ghost">■ Esci</button>
+        <div class="session-pipeline-name">📞 Richiamo${pipeline ? ' — ' + escapeHtml(pipeline.name) : ''}</div>
+        <div></div>
+      </div>
+
+      <div class="card recov-hero">
+        <div class="recov-hero-name">${escapeHtml(cb.leadName || '(senza nome)')}</div>
+        <div class="recov-hero-phone-row">
+          <span class="recov-hero-phone">${cb.phone ? escapeHtml(cb.phone) : 'Nessun numero salvato'}</span>
+          ${cb.phone ? `<button class="crm-copy-phone-btn" id="btnCopyCbPhone" title="Copia numero">⧉</button>` : ''}
+        </div>
+        <div class="recov-hero-counter">Richiamo programmato per: <strong>${fmtDateTime(cb.scheduledAt)}</strong></div>
+      </div>
+
+      ${retryBannerHtml}
+
+      <div class="outcome-grid">${buttonsHtml}</div>
+    </div>
+  `;
+
+  document.getElementById('btnExitCallbackCall').addEventListener('click', () => {
+    cb.inCallAttempts = 0;
+    cb.inCallRetryPending = false;
+    db.callbackCallActiveId = null;
+    persist();
+    renderRoute();
+  });
+
+  const copyBtn = document.getElementById('btnCopyCbPhone');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const ok = await copyToClipboard(cb.phone);
+      showToast(ok ? 'Numero copiato.' : 'Seleziona e copia manualmente.', !ok);
+    });
+  }
+
+  appRoot.querySelectorAll('[data-cb-outcome-id]').forEach(btn => {
+    btn.addEventListener('click', () => logCallbackCall(btn.dataset.cbOutcomeId));
+  });
+}
+
+/**
+ * Esito di una chiamata di richiamo. Stessa logica di base di logCallAction (richiamo
+ * immediato su "nessuna risposta", fino a CALLBACK_MAX_CALL_ATTEMPTS), con due differenze:
+ * - la chiamata viene accodata alla sessione "giusta" (vedi appendCallbackCallToSession),
+ *   non necessariamente a db.activeSession;
+ * - se l'esito finale è di nuovo "Da richiamare", NON si esce: si riapre la tendina per
+ *   riprogrammare il richiamo (il lead resta 'pending'). Per qualunque altro esito finale
+ *   (compreso "nessuna risposta" dopo aver esaurito i tentativi) il lead viene segnato
+ *   'done' e si esce subito dalla schermata, come richiesto esplicitamente dall'utente.
+ */
+function logCallbackCall(outcomeId) {
+  const cb = (db.callbacks || []).find(c => c.id === db.callbackCallActiveId);
+  if (!cb) return;
+  const pipeline = db.pipelines.find(p => p.id === cb.sourcePipelineId);
+  const outcomes = pipeline ? pipeline.outcomes : defaultOutcomesList();
+  const outcome = outcomes.find(o => o.id === outcomeId);
+  if (!outcome) return;
+
+  const isRetryAttempt = !!cb.inCallRetryPending;
+
+  const callRecord = {
+    id: uid('call'),
+    timestamp: new Date().toISOString(),
+    outcomeId: outcome.id,
+    outcomeLabel: outcome.label,
+    isConversion: !!outcome.isConversion,
+    isNoAnswer: !!outcome.isNoAnswer,
+    isSecondAttempt: isRetryAttempt,
+    groupId: cb.inCallGroupId,
+    isCallbackCall: true
+  };
+  appendCallbackCallToSession(callRecord);
+
+  cb.callCount = (cb.callCount || 0) + 1;
+  cb.lastCalledAt = callRecord.timestamp;
+
+  const attemptsSoFar = isRetryAttempt ? (cb.inCallAttempts || 1) + 1 : 1;
+  cb.inCallAttempts = attemptsSoFar;
+  const canRetry = !!outcome.isNoAnswer && attemptsSoFar < CALLBACK_MAX_CALL_ATTEMPTS;
+  cb.inCallRetryPending = canRetry;
+
+  if (canRetry) {
+    persist();
+    renderCallbackCallScreen();
+    return;
+  }
+
+  if (outcome.label === CALLBACK_OUTCOME_LABEL) {
+    // Esito "Da richiamare" di nuovo: riprogramma invece di chiudere — riapre la stessa
+    // tendina usata alla creazione, precompilata, per scegliere il nuovo quando.
+    cb.inCallAttempts = 0;
+    persist();
+    openCallbackModal({
+      mode: 'reschedule',
+      existingCallbackId: cb.id,
+      afterSave: () => { db.callbackCallActiveId = null; persist(); renderRoute(); }
+    });
+    return;
+  }
+
+  cb.status = 'done';
+  cb.resolvedOutcomeLabel = outcome.label;
+  cb.resolvedAt = callRecord.timestamp;
+  cb.inCallAttempts = 0;
+  cb.inCallRetryPending = false;
+  db.callbackCallActiveId = null;
+  persist();
+  renderRoute();
+
+  if (outcome.label === APPOINTMENT_SET_OUTCOME_LABEL) {
+    openAppointmentSetModal();
+  }
+}
+
+/** Calcola la data/ora per i quick button della tendina "Da richiamare" — 'custom' non ha
+ * un valore precalcolato, lascia che sia l'utente a scegliere manualmente. */
+function computeQuickCallbackTime(key) {
+  const now = new Date();
+  if (key === '10m') return new Date(now.getTime() + 10 * 60000).toISOString().slice(0, 16);
+  if (key === '1h') return new Date(now.getTime() + 60 * 60000).toISOString().slice(0, 16);
+  if (key === 'afternoon') { const d = new Date(now); d.setHours(15, 0, 0, 0); return d.toISOString().slice(0, 16); }
+  if (key === 'tomorrow') { const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.toISOString().slice(0, 16); }
+  if (key === 'nextweek') { const d = startOfWeek(now); d.setDate(d.getDate() + 7); d.setHours(9, 0, 0, 0); return d.toISOString().slice(0, 16); }
+  return null;
+}
+
+/**
+ * Tendina "Da richiamare": due modalità.
+ * - 'create' (opts.groupId/sourceSessionId/sourcePipelineId/sourcePipelineName): chiede
+ *   nome e telefono del lead (nuova entry in db.callbacks), usata quando si preme l'esito
+ *   "Da richiamare" durante una sessione normale (vedi logCallAction).
+ * - 'reschedule' (opts.existingCallbackId): nome/telefono restano quelli già salvati,
+ *   si cambia solo quando richiamarlo — usata quando l'esito "Da richiamare" viene scelto
+ *   di nuovo dentro la schermata "Chiama" stessa (vedi logCallbackCall).
+ * In entrambi i casi: quick button + un campo data/ora libero per un orario personalizzato.
+ */
+function openCallbackModal(opts) {
+  opts = opts || {};
+  const isReschedule = opts.mode === 'reschedule';
+  const defaultWhen = computeQuickCallbackTime('1h');
+
+  openModal(`
+    <h3>${isReschedule ? 'Richiama più tardi' : 'Da richiamare'}</h3>
+    <p class="text-dim" style="font-size:0.85rem;">Quando vuoi essere ricordato di richiamare questo lead?</p>
+    ${!isReschedule ? `
+    <label class="field">Nome lead<input type="text" id="cbName" placeholder="Nome e cognome" autofocus></label>
+    <label class="field">Telefono (facoltativo)<input type="text" id="cbPhone" placeholder="Numero di telefono"></label>
+    ` : ''}
+    <div class="field">
+      <span>Quando</span>
+      <div class="chip-select-row">
+        <button class="chip-select" data-quick-time="10m">Fra 10 minuti</button>
+        <button class="chip-select active" data-quick-time="1h">Fra 1 ora</button>
+        <button class="chip-select" data-quick-time="afternoon">Oggi pomeriggio</button>
+        <button class="chip-select" data-quick-time="tomorrow">Domani</button>
+        <button class="chip-select" data-quick-time="nextweek">Settimana prossima</button>
+        <button class="chip-select" data-quick-time="custom">Data/ora personalizzata</button>
+      </div>
+    </div>
+    <label class="field">Data e ora richiamo<input type="datetime-local" id="cbWhen" value="${defaultWhen}"></label>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="cbCancelBtn">Annulla</button>
+      <button class="btn-primary" id="cbConfirmBtn">Salva</button>
+    </div>
+  `);
+
+  const nameInput = document.getElementById('cbName');
+  if (nameInput) nameInput.focus();
+
+  modalRoot.querySelectorAll('[data-quick-time]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      modalRoot.querySelectorAll('[data-quick-time]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const key = btn.dataset.quickTime;
+      if (key === 'custom') { document.getElementById('cbWhen').focus(); return; }
+      const val = computeQuickCallbackTime(key);
+      if (val) document.getElementById('cbWhen').value = val;
+    });
+  });
+
+  document.getElementById('cbCancelBtn').addEventListener('click', () => {
+    closeModal();
+    if (isReschedule) {
+      db.callbackCallActiveId = null;
+      persist();
+      renderRoute();
+    }
+  });
+
+  document.getElementById('cbConfirmBtn').addEventListener('click', () => {
+    const when = document.getElementById('cbWhen').value;
+    if (!when) { showToast('Scegli quando richiamarlo.', true); return; }
+
+    if (isReschedule) {
+      const cb = (db.callbacks || []).find(c => c.id === opts.existingCallbackId);
+      if (!cb) { closeModal(); return; }
+      cb.scheduledAt = when;
+      cb.createdDateKey = dateInputValue(new Date());
+      cb.createdAt = new Date().toISOString();
+      cb.status = 'pending';
+      cb.inCallAttempts = 0;
+      cb.inCallRetryPending = false;
+      persist();
+      closeModal();
+      showToast('Richiamo riprogrammato.');
+    } else {
+      const name = document.getElementById('cbName').value.trim();
+      if (!name) { showToast('Inserisci il nome del lead.', true); document.getElementById('cbName').focus(); return; }
+      const phone = document.getElementById('cbPhone').value.trim();
+      db.callbacks = db.callbacks || [];
+      db.callbacks.push({
+        id: uid('callback'),
+        leadName: name,
+        phone: phone || null,
+        scheduledAt: when,
+        createdAt: new Date().toISOString(),
+        createdDateKey: dateInputValue(new Date()),
+        leadGroupId: opts.groupId || null,
+        sourcePipelineId: opts.sourcePipelineId || null,
+        sourcePipelineName: opts.sourcePipelineName || '',
+        sourceSessionId: opts.sourceSessionId || null,
+        status: 'pending',
+        callCount: 0,
+        lastCalledAt: null,
+        inCallAttempts: 0,
+        inCallRetryPending: false,
+        inCallGroupId: null,
+        resolvedOutcomeLabel: null,
+        resolvedAt: null
+      });
+      persist();
+      closeModal();
+      showToast('Richiamo programmato.');
+    }
+
+    if (typeof opts.afterSave === 'function') opts.afterSave();
+  });
+}
+
+/** Elenco completo (modale) di tutti i lead "Da richiamare" ancora in attesa, da qualunque
+ * sessione/giorno provengano — bottone "Da richiamare" in Setting > Appuntamenti. */
+function openCallbacksListModal() {
+  const pending = [...(db.callbacks || [])]
+    .filter(c => c.status === 'pending')
+    .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
+  const now = new Date();
+
+  const rowsHtml = pending.length ? pending.map(cb => {
+    const overdue = new Date(cb.scheduledAt) < now;
+    return `
+      <div class="callback-row">
+        <div class="callback-row-main">
+          <div class="callback-row-name">${escapeHtml(cb.leadName || '(senza nome)')}</div>
+          <div class="callback-row-sub">${cb.phone ? escapeHtml(cb.phone) + ' · ' : ''}${escapeHtml(cb.sourcePipelineName || '')}</div>
+        </div>
+        <div class="callback-row-when ${overdue ? 'overdue' : ''}">${fmtDateTime(cb.scheduledAt)}</div>
+        <button class="btn-primary" data-call-callback="${cb.id}">Chiama</button>
+      </div>`;
+  }).join('') : '<p class="text-dim">Nessun lead da richiamare al momento.</p>';
+
+  openModal(`
+    <h3>Da richiamare</h3>
+    <div class="callbacks-list">${rowsHtml}</div>
+    <div class="modal-actions">
+      <button class="btn-ghost" data-close-modal="1">Chiudi</button>
+    </div>
+  `);
+  modalRoot.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', closeModal));
+  modalRoot.querySelectorAll('[data-call-callback]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      closeModal();
+      startCallbackCall(btn.dataset.callCallback);
+    });
+  });
 }
 
 /* ---------- Modale "Nuova sessione" ---------- */
@@ -3618,7 +4693,24 @@ function wireModalEvents() {
   }
 }
 
+/**
+ * Punto d'ingresso pubblico per avviare una sessione NORMALE (qualunque pipeline): fa da
+ * "cancello" per il Round Conferme — se ci sono appuntamenti di domani da confermare,
+ * propone prima il Sì/No (vedi openConfirmRoundPromptModal), altrimenti avvia la sessione
+ * direttamente. La creazione vera e propria della sessione è in beginPipelineSession,
+ * richiamata sia da qui (risposta "No") sia da exitConfirmRound (risposta "Sì", a fine
+ * round) così il codice di avvio sessione resta in un punto solo.
+ */
 function startSessionAction(pipelineId) {
+  const pending = getPendingConfirmAppointments();
+  if (pending.length > 0) {
+    openConfirmRoundPromptModal(pipelineId, pending.length);
+    return;
+  }
+  beginPipelineSession(pipelineId);
+}
+
+function beginPipelineSession(pipelineId) {
   const pipeline = db.pipelines.find(p => p.id === pipelineId);
   if (!pipeline) return;
   db.sessionCounter += 1;
@@ -3634,8 +4726,10 @@ function startSessionAction(pipelineId) {
     retryCallsPending: false,
     callAttemptsOnLead: 0,
     pausedAt: null,
-    pausedTotalMs: 0
+    pausedTotalMs: 0,
+    currentLeadGroupId: null // id del lead attualmente in corso (vedi logCallAction/computeStats)
   };
+  uiState.sessionMinimized = false;
   persist();
   closeModal();
   location.hash = '#/sessione-attiva';
@@ -4017,7 +5111,16 @@ function updateSyncStatusVisibility() {
 document.querySelectorAll('.navlink').forEach(l => {
   l.addEventListener('click', () => { location.hash = '#/' + l.dataset.route; });
 });
-document.getElementById('btnNuovaSessione').addEventListener('click', openNewSessionModal);
+document.getElementById('btnNuovaSessione').addEventListener('click', () => {
+  // Una sessione è già in corso (magari minimizzata) -> il tasto rientra invece di
+  // aprirne una seconda, che sovrascriverebbe db.activeSession perdendo la prima.
+  if (db.activeSession) {
+    uiState.sessionMinimized = false;
+    renderRoute();
+    return;
+  }
+  openNewSessionModal();
+});
 document.getElementById('btnExport').addEventListener('click', exportData);
 document.getElementById('importFile').addEventListener('change', (e) => {
   if (e.target.files[0]) importData(e.target.files[0]);
