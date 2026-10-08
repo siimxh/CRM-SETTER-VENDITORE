@@ -1794,3 +1794,7 @@ body.font-archivo, body.font-archivo h1, body.font-archivo h2, body.font-archivo
 /* Riquadro "Pace del mese" in Andamento generale: una riga, come le pace degli Obiettivi. */
 .pace-box { padding-top: 12px; padding-bottom: 12px; }
 .pace-box .month-pace { margin-left: 0; }
+
+/* Pennetta ✎ per modificare un "Da richiamare" (sidebar sessione ed elenco). */
+.callback-edit-btn { background: none; border: none; padding: 0 4px; margin-left: 6px; cursor: pointer; color: var(--text-dim); font-size: 0.95rem; line-height: 1; }
+.callback-edit-btn:hover { color: var(--accent); }

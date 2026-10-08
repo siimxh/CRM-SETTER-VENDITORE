@@ -4168,6 +4168,9 @@ function renderSessioneAttiva() {
     location.hash = '#/dashboard';
     renderRoute();
   });
+  appRoot.querySelectorAll('[data-edit-callback]').forEach(btn => {
+    btn.addEventListener('click', () => openEditCallbackModal(btn.dataset.editCallback, () => renderRoute()));
+  });
   appRoot.querySelectorAll('[data-call-callback]').forEach(btn => {
     btn.addEventListener('click', () => { if (!db.activeSession.pausedAt) startCallbackCall(btn.dataset.callCallback); });
   });
@@ -4181,7 +4184,7 @@ function renderSessioneAttiva() {
 function renderSessionCallbackSidebar(sessionCallbacks) {
   const itemsHtml = sessionCallbacks.map(cb => `
     <div class="session-callback-item">
-      <div class="session-callback-item-name">${escapeHtml(cb.leadName)}</div>
+      <div class="session-callback-item-name">${escapeHtml(cb.leadName)}<button class="callback-edit-btn" data-edit-callback="${cb.id}" title="Modifica dati del lead">✎</button></div>
       ${cb.phone ? `<div class="session-callback-item-phone">${escapeHtml(cb.phone)}</div>` : ''}
       <div class="session-callback-item-when ${new Date(cb.scheduledAt) < startOfDay(new Date()) ? 'overdue' : ''}">${new Date(cb.scheduledAt) < startOfDay(new Date()) ? 'Arretrato · ' : ''}${fmtDateTime(cb.scheduledAt)}</div>
       <button class="btn-ghost session-callback-item-btn" data-call-callback="${cb.id}">Chiama</button>
@@ -4742,7 +4745,7 @@ function openCallbacksListModal() {
     return `
       <div class="callback-row">
         <div class="callback-row-main">
-          <div class="callback-row-name">${escapeHtml(cb.leadName || '(senza nome)')}</div>
+          <div class="callback-row-name">${escapeHtml(cb.leadName || '(senza nome)')}<button class="callback-edit-btn" data-edit-callback="${cb.id}" title="Modifica dati del lead">✎</button></div>
           <div class="callback-row-sub">${cb.phone ? escapeHtml(cb.phone) + ' · ' : ''}${escapeHtml(cb.sourcePipelineName || '')}</div>
         </div>
         <div class="callback-row-when ${overdue ? 'overdue' : ''}">${fmtDateTime(cb.scheduledAt)}</div>
@@ -4758,11 +4761,48 @@ function openCallbacksListModal() {
     </div>
   `);
   modalRoot.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', closeModal));
+  modalRoot.querySelectorAll('[data-edit-callback]').forEach(btn => {
+    btn.addEventListener('click', () => openEditCallbackModal(btn.dataset.editCallback, openCallbacksListModal));
+  });
   modalRoot.querySelectorAll('[data-call-callback]').forEach(btn => {
     btn.addEventListener('click', () => {
       closeModal();
       startCallbackCall(btn.dataset.callCallback);
     });
+  });
+}
+
+/** Pennetta ✎ su un "Da richiamare" (Simone, 2026-10-08): corregge nome, telefono e
+ * data/ora del richiamo se erano stati inseriti sbagliati. Non tocca storico e stato. */
+function openEditCallbackModal(callbackId, onDone) {
+  const cb = (db.callbacks || []).find(c => c.id === callbackId);
+  if (!cb) return;
+  const pad = (n) => String(n).padStart(2, '0');
+  const d = cb.scheduledAt ? new Date(cb.scheduledAt) : null;
+  const whenVal = d && !isNaN(d) ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}` : '';
+  openModal(`
+    <h3>Modifica lead da richiamare</h3>
+    <label class="field">Nome lead<input type="text" id="cbEditName" value="${escapeHtml(cb.leadName || '')}"></label>
+    <label class="field">Telefono<input type="text" id="cbEditPhone" value="${escapeHtml(cb.phone || '')}"></label>
+    <label class="field">Data e ora richiamo<input type="datetime-local" id="cbEditWhen" value="${whenVal}"></label>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="cbEditCancel">Annulla</button>
+      <button class="btn-primary" id="cbEditSave">Salva</button>
+    </div>
+  `);
+  document.getElementById('cbEditName').focus();
+  document.getElementById('cbEditCancel').addEventListener('click', () => { closeModal(); if (onDone) onDone(); });
+  document.getElementById('cbEditSave').addEventListener('click', () => {
+    const name = document.getElementById('cbEditName').value.trim();
+    if (!name) { showToast('Inserisci il nome del lead.', true); return; }
+    const when = document.getElementById('cbEditWhen').value;
+    cb.leadName = name;
+    cb.phone = document.getElementById('cbEditPhone').value.trim() || null;
+    if (when) cb.scheduledAt = when;
+    persist();
+    closeModal();
+    showToast('Dati del lead aggiornati.');
+    if (onDone) onDone();
   });
 }
 
