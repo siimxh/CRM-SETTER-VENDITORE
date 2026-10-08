@@ -1723,3 +1723,45 @@ body.in-session #confirmAlertBanner { display: none; }
 
 .builder-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px; }
 
+
+
+/* ============================================================================
+   SKIN di leggibilità — preset "Carta" e "Semaforo" del builder 🎨 (rebranding
+   richiesto dall'utente: dopo ore di schermo fa fatica a leggere i dati).
+   Attivate da html[data-skin] (vedi app.js:applyTheme). Stanno in fondo al file così
+   battono sia la palette chiara sia quella scura di sistema.
+   - testo ~18% più grande ovunque (tutto il CSS è in rem);
+   - un solo font molto leggibile, anche per numeri ed etichette (niente monospace);
+   - niente MAIUSCOLETTO e niente spaziatura larga tra le lettere;
+   - testo secondario più scuro, per un contrasto alto ma non sparato.
+   ============================================================================ */
+html[data-skin] { font-size: 118%; }
+html[data-skin] body, html[data-skin] body * {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+html[data-skin] body { line-height: 1.45; }
+
+html[data-skin="carta"] {
+  --text-dim: #5e5a52;
+  --warning: #7a4b00;
+  --mono: 'Lexend', sans-serif;
+  --heading-font: 'Lexend', sans-serif;
+}
+html[data-skin="carta"] body, html[data-skin="carta"] body * { font-family: 'Lexend', sans-serif !important; }
+
+html[data-skin="semaforo"] {
+  --text-dim: #4a535c;
+  --warning: #a04d00;
+  --mono: 'IBM Plex Sans', sans-serif;
+  --heading-font: 'IBM Plex Sans', sans-serif;
+}
+html[data-skin="semaforo"] body, html[data-skin="semaforo"] body * { font-family: 'IBM Plex Sans', sans-serif !important; }
+
+/* Nelle skin l'accento è un blu scuro: il testo sopra le superfici piene di accento
+   va bianco (nelle palette lime/ambra era nero). */
+html[data-skin] .tf-tab.active,
+html[data-skin] .crm-chip.active,
+html[data-skin] .chip-select.active,
+html[data-skin] .pill.active,
+html[data-skin] .btn-primary { color: #fff !important; }

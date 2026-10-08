@@ -78,6 +78,7 @@ function defaultGoals() {
 function defaultSettings() {
   return {
     preset: 'graphite-lime',
+    skin: null, // 'carta' | 'semaforo' — skin di leggibilità dei preset omonimi (vedi app.js)
     colors: {
       bg: '#17181a',
       bgElev: '#1e2022',
