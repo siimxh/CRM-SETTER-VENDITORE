@@ -2691,7 +2691,8 @@ function newAppointment(role) {
  */
 const DEAL_STAGES = [
   { key: 'no_show',           label: 'No Show',           color: 'mustard',  isClosed: false, isPresented: false },
-  { key: 'annullato',         label: 'Annullato',         color: 'slate',    isClosed: false, isPresented: true },
+  // Annullato: né presentato né no-show — fuori da show rate e closing rate (come Spostato).
+  { key: 'annullato',         label: 'Annullato',         color: 'slate',    isClosed: false, isPresented: false },
   { key: 'trattativa',        label: 'Trattativa',        color: 'sky',      isClosed: false, isPresented: true },
   { key: 'contratto_firmato', label: 'Contratto Firmato', color: 'mint',     isClosed: true,  isPresented: true },
   { key: 'chiuso',            label: 'Chiuso',            color: 'forest',   isClosed: true,  isPresented: true },

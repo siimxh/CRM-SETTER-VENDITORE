@@ -435,9 +435,8 @@ function computeFunnelValues(db, role, range) {
   const fissatiAppts = roleAppts.filter(a => isCountedAsNewBooking(a) && inRange(a.createdAt, range));
   const appts = roleAppts.filter(a => inRange(a.scheduledAt, range));
   // "Presentati": per il Setter segue presentedStatus (invariato); per il Venditore
-  // segue il nuovo dealStage — presentato = qualunque stato tranne No Show (vedi
-  // DEAL_STAGES.isPresented in app.js), dato che No Show è l'unico stato che significa
-  // "il lead non si è fatto vedere".
+  // segue il nuovo dealStage — presentato = isPresented (vedi
+  // DEAL_STAGES.isPresented in app.js): esclusi No Show, Annullato e Spostato;
   const presentati = role === 'venditore'
     ? appts.filter(a => a.dealStage && dealStageDef(a.dealStage) && dealStageDef(a.dealStage).isPresented).length
     : appts.filter(a => a.presentedStatus === 'presented').length;
@@ -610,7 +609,8 @@ function computeSetterStats(db, range) {
 
   // Un appuntamento spostato non si è svolto in quella data: non entra negli "svolti"
   // (altrimenti abbasserebbe lo show-up rate). Conta il nuovo, quando si svolge.
-  const svolti = scoped.filter(a => !isMovedAppointment(a) && a.scheduledAt && new Date(a.scheduledAt) <= now);
+  // Stesso discorso per l'annullato: né show né no-show, fuori dallo show-up rate.
+  const svolti = scoped.filter(a => !isMovedAppointment(a) && a.presentedStatus !== 'annullato' && a.scheduledAt && new Date(a.scheduledAt) <= now);
   const presentati = scoped.filter(a => a.presentedStatus === 'presented');
   const presentatiSvolti = svolti.filter(a => a.presentedStatus === 'presented');
 
