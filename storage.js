@@ -78,6 +78,7 @@ function defaultGoals() {
 function defaultSettings() {
   return {
     preset: 'graphite-lime',
+    skin: null, // 'carta' — skin di leggibilità del preset omonimo (vedi app.js)
     colors: {
       bg: '#17181a',
       bgElev: '#1e2022',

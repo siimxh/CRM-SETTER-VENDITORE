@@ -116,6 +116,15 @@ const THEME_PRESETS = {
   'cobalt-light': {
     label: 'Cobalt Light',
     colors: { bg: '#f4f6fb', bgElev: '#ffffff', accent: '#3355ff', text: '#0e1220', setterColor: '#3355ff', venditoreColor: '#0f7a5c', success: '#0f7a5c', danger: '#c23b3b' }
+  },
+  // Rebranding "leggibilità" (proposta 2, scelta dall'utente tra quelle richieste dall'utente perché dopo ore di
+  // schermo fa fatica a leggere i dati). Oltre ai colori portano una "skin" (vedi
+  // applyTheme e la sezione SKIN in fondo a style.css): font più leggibile, testo più
+  // grande, niente maiuscoletto/monospace nelle etichette, contrasto del testo secondario.
+  'carta': {
+    label: 'Carta (leggibile)',
+    skin: 'carta', radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#f3efe7', bgElev: '#fbf9f4', accent: '#2346a0', text: '#22211e', setterColor: '#2346a0', venditoreColor: '#1985ab', success: '#1f6b2e', danger: '#b3261e' }
   }
 };
 
@@ -171,6 +180,10 @@ function applyTheme(settings) {
     root.style.setProperty('--accent-dim', hexToRgba(c.accent, 0.16));
   }
   if (c.text) root.style.setProperty('--text', c.text);
+
+  // Skin di leggibilità (preset Carta): vedi la sezione SKIN in fondo a style.css.
+  if (settings.skin) root.setAttribute('data-skin', settings.skin);
+  else root.removeAttribute('data-skin');
   if (c.setterColor) root.style.setProperty('--setter-color', c.setterColor);
   if (c.venditoreColor) root.style.setProperty('--venditore-color', c.venditoreColor);
   if (c.success) root.style.setProperty('--success', c.success);
@@ -5052,6 +5065,9 @@ function wireBuilderEvents() {
       if (!preset) return;
       db.settings.preset = el.dataset.preset;
       db.settings.colors = Object.assign({}, preset.colors);
+      db.settings.skin = preset.skin || null;
+      if (preset.radiusStyle) db.settings.radiusStyle = preset.radiusStyle;
+      if (preset.glowLevel) db.settings.glowLevel = preset.glowLevel;
       persist();
       applyTheme(db.settings);
       renderBuilderPage();
