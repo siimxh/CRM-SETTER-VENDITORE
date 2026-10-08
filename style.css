@@ -1778,3 +1778,14 @@ body.font-archivo, body.font-archivo h1, body.font-archivo h2, body.font-archivo
 .month-pace-label { font-size: 0.8rem; font-weight: 500; color: var(--text-dim); }
 .month-pace-num { font-size: 1.35rem; font-weight: 700; color: var(--accent); }
 .month-pace-sub { font-size: 0.78rem; font-weight: 400; color: var(--text-dim); }
+
+/* Obiettivi, design "Ritmo": barra + tacca "dove dovresti essere adesso" + stato. */
+.pace-wrap { position: relative; margin-top: 8px; }
+.pace-wrap .goal-bar-track { height: 12px; }
+.funnel-card .goal-bar-fill.pace-ok { background: var(--success); }
+.funnel-card .goal-bar-fill.pace-late { background: var(--warning); }
+.pace-mark { position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1px; border-radius: 2px; background: var(--text); }
+.pace-status { font-size: 0.78rem; font-weight: 700; margin-top: 6px; }
+.pace-status.ok { color: var(--success); }
+.pace-status.late { color: var(--warning); }
+.pace-status.dim { color: var(--text-dim); font-weight: 400; }

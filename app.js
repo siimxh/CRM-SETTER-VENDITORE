@@ -877,11 +877,55 @@ function renderFunnelHero(role, timeframe, step, values, goalSet) {
       <div class="hero-label">${escapeHtml(step.label)}</div>
       <div class="hero-num" data-kpi-num="${current}" data-kpi-money="${isMoney ? '1' : '0'}" data-kpi-display="${fmtVal(current)}">${fmtVal(current)}</div>
       <div class="hero-edit-row">${editRow}</div>
-      <div class="goal-bar-track hero-bar" data-goal-pct="${progressPct}"><div class="goal-bar-fill ${complete ? 'complete' : ''}" style="width:${progressPct}%"></div></div>
+      ${renderPaceBar(current, target, timeframe, isMoney, 'hero-bar')}
     </div>`;
 }
 
-/** Tappe successive del funnel, rese come tile compatte con mini-storico a barre (sparkline). */
+/**
+ * Design "Ritmo" (scelto da Simone il 2026-10-08): ogni obiettivo ha una barra con una
+ * tacca che segna dove dovresti essere ADESSO nel periodo, e sotto se sei in linea o
+ * quanto sei indietro.
+ * Quota di periodo trascorsa: Giorno = ore lavorative 9-19; Settimana e Mese = giorni
+ * lavorativi lun-ven passati (oggi incluso). Un periodo già finito (es. "Migliore di
+ * sempre") vale 1.
+ */
+function goalElapsedFraction(timeframe) {
+  const range = getGoalsPeriodRange(timeframe);
+  const now = new Date();
+  if (now > range.end) return 1;
+  if (now < range.start) return 0;
+  if (timeframe === 'day') {
+    const h = now.getHours() + now.getMinutes() / 60;
+    return Math.max(0, Math.min(1, (h - 9) / 10));
+  }
+  const total = countWeekdays(range.start, range.end);
+  return total > 0 ? Math.min(1, countWeekdays(range.start, now) / total) : 1;
+}
+
+function renderPaceBar(current, target, timeframe, isMoney, extraCls) {
+  const fmt = (n) => isMoney ? `€${Math.round(n)}` : String(n);
+  if (!(target > 0)) {
+    return `<div class="pace-wrap ${extraCls}"><div class="goal-bar-track"><div class="goal-bar-fill" style="width:0%"></div></div></div>
+      <div class="pace-status dim">Imposta un obiettivo</div>`;
+  }
+  const frac = goalElapsedFraction(timeframe);
+  const progressPct = Math.min(100, pct(current, target));
+  const expected = target * frac;
+  let cls, msg;
+  if (current >= target) { cls = 'ok'; msg = 'Obiettivo raggiunto'; }
+  else if (current >= expected) { cls = 'ok'; msg = 'In linea col ritmo'; }
+  else {
+    const gap = isMoney ? Math.round(expected - current) : Math.ceil(expected - current - 1e-9);
+    cls = 'late'; msg = `Indietro di ${fmt(gap)}`;
+  }
+  return `<div class="pace-wrap ${extraCls}" data-goal-pct="${progressPct}">
+      <div class="goal-bar-track"><div class="goal-bar-fill pace-${cls}" style="width:${progressPct}%"></div></div>
+      ${frac > 0 && frac < 1 ? `<div class="pace-mark" style="left:${Math.round(frac * 100)}%" title="Dove dovresti essere adesso"></div>` : ''}
+    </div>
+    <div class="pace-status ${cls}">${msg}</div>`;
+}
+
+/** Tappe successive del funnel, rese come tile compatte con barra "Ritmo" (vedi renderPaceBar). */
 function renderFunnelMini(role, timeframe, step, values, goalSet, range) {
   const current = values[step.key] || 0;
   const isMoney = step.money;
@@ -895,20 +939,12 @@ function renderFunnelMini(role, timeframe, step, values, goalSet, range) {
     ? `<input type="number" min="0" class="funnel-target-input" id="goalEditInput" value="${target}">`
     : `<span>${fmtVal(target)}</span><button class="funnel-target-edit" data-edit-goal="1" data-role="${role}" data-tf="${timeframe}" data-step="${step.key}" title="Modifica obiettivo">✎</button>`;
 
-  const series = computeFunnelSparkline(db, role, step.key, timeframe, range);
-  const maxVal = Math.max(1, ...series);
-  const barsHtml = series.map(v => {
-    const h = Math.max(6, Math.round((v / maxVal) * 100));
-    const on = v > 0 ? 'on' : '';
-    return `<i class="${on}" style="height:${h}%"></i>`;
-  }).join('');
-
   return `
     <div class="mini ${role}">
       <div class="mini-label">${escapeHtml(step.label)}</div>
       <div class="mini-num" data-kpi-num="${current}" data-kpi-money="${isMoney ? '1' : '0'}" data-kpi-display="${fmtVal(current)}">${fmtVal(current)}</div>
       <div class="mini-target">/ ${targetHtml}</div>
-      <div class="spark" data-goal-pct="${progressPct}">${barsHtml}</div>
+      ${renderPaceBar(current, target, timeframe, isMoney, '')}
     </div>`;
 }
 
