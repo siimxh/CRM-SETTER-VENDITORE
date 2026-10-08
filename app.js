@@ -679,15 +679,26 @@ function renderDashboardTopSections() {
     ${tabsHtml}
     ${bestCaptionHtml}
     <section class="card goals-section">
-      <h2><span class="role-dot setter"></span>Obiettivi Setter</h2>
+      <h2><span class="role-dot setter"></span>Obiettivi Setter${renderMonthPace('setter')}</h2>
       ${setterFunnel}
     </section>
     <section class="card goals-section">
-      <h2><span class="role-dot venditore"></span>Obiettivi Venditore</h2>
+      <h2><span class="role-dot venditore"></span>Obiettivi Venditore${renderMonthPace('venditore')}</h2>
       ${venditoreFunnel}
     </section>
     ${commKpi}
   `;
+}
+
+/** Pace del mese (richiesto 2026-10-08): a che cifra di commissioni chiudi il mese se
+ * tieni il ritmo attuale. Sempre sul mese corrente, a prescindere dal tab scelto. */
+function renderMonthPace(role) {
+  const p = computeMonthPace(db, role);
+  return `<span class="month-pace" title="Commissioni del mese finora divise per i giorni lavorativi passati, moltiplicate per quelli del mese">
+    <span class="month-pace-label">Pace mese</span>
+    <span class="month-pace-num">€${p.pace}</span>
+    <span class="month-pace-sub">finora €${p.soFar} · giorno ${p.elapsed} di ${p.total} (lun-ven)</span>
+  </span>`;
 }
 
 function renderEyebrows() {
@@ -746,7 +757,9 @@ const FUNNEL_STEPS_VENDITORE = [
   { key: 'chiusi', label: 'Chiusi', money: false },
   // 4a tappa richiesta esplicitamente dall'utente: il totale VENDUTO (non le commissioni)
   // sugli appuntamenti Venditore chiusi nel periodo — vedi "fatturato" in computeFunnelValues.
-  { key: 'fatturato', label: 'Fatturato', money: true }
+  { key: 'fatturato', label: 'Fatturato', money: true },
+  // 5a tappa (richiesta 2026-10-08): commissioni Venditore = 10% del fatturato sopra.
+  { key: 'commissioniVendita', label: 'Commissioni', money: true }
 ];
 
 const TIMEFRAME_KEYS = ['day', 'week', 'month'];
@@ -819,7 +832,7 @@ function renderFunnelCard(role, timeframe, steps, range) {
   const miniSteps = steps.slice(1);
   const heroHtml = renderFunnelHero(role, timeframe, heroStep, values, goalSet);
   const miniHtml = miniSteps.map(step => renderFunnelMini(role, timeframe, step, values, goalSet, range)).join('');
-  const rowClass = miniSteps.length <= 2 ? 'v3' : (miniSteps.length === 3 ? 'v4' : '');
+  const rowClass = miniSteps.length <= 2 ? 'v3' : (miniSteps.length === 3 ? 'v4' : (miniSteps.length === 4 ? 'v5' : ''));
   return `
     <div class="card funnel-card ${role}">
       <div class="hero-row ${rowClass}">

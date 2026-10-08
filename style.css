@@ -1033,9 +1033,10 @@ body.in-session #topbar { display: none; }
 .hero-row.v3 { grid-template-columns: 1.4fr repeat(2, 1fr); }
 /* v4 = hero + 3 mini-tile (es. funnel Venditore con "Fatturato" aggiunto come 4a tappa). */
 .hero-row.v4 { grid-template-columns: 1.4fr repeat(3, 1fr); }
+.hero-row.v5 { grid-template-columns: 1.4fr repeat(4, 1fr); }
 /* Sotto ~980px le 6 colonne del funnel Setter non respirano più: 3 colonne su 2 righe. */
 @media (max-width: 980px) { .hero-row:not(.v3) { grid-template-columns: repeat(3, 1fr); } .hero-row:not(.v3) > :first-child { grid-column: 1 / -1; } }
-@media (max-width: 560px) { .hero-row, .hero-row.v3, .hero-row.v4 { grid-template-columns: 1fr 1fr; } .hero-row > :first-child { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .hero-row, .hero-row.v3, .hero-row.v4, .hero-row.v5 { grid-template-columns: 1fr 1fr; } .hero-row > :first-child { grid-column: 1 / -1; } }
 
 .hero-main {
   background: var(--bg-elev2);
@@ -1770,3 +1771,10 @@ body.font-archivo, body.font-archivo h1, body.font-archivo h2, body.font-archivo
   --stage-no_show: #e0b23d; --stage-annullato: #9a9d9f; --stage-trattativa: #7fd9ff;
   --stage-contratto_firmato: #9be564; --stage-chiuso: #4ade80; --stage-perso: #ff7a6b; --stage-spostato: #b49cff; --stage-non_in_target: #e0a96d;
 }
+
+/* Pace del mese accanto al titolo Obiettivi Setter/Venditore. */
+.goals-section h2 { flex-wrap: wrap; }
+.month-pace { margin-left: auto; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-family: var(--mono); color: var(--text); }
+.month-pace-label { font-size: 0.8rem; font-weight: 500; color: var(--text-dim); }
+.month-pace-num { font-size: 1.35rem; font-weight: 700; color: var(--accent); }
+.month-pace-sub { font-size: 0.78rem; font-weight: 400; color: var(--text-dim); }

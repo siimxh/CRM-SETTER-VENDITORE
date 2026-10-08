@@ -453,6 +453,7 @@ function computeFunnelValues(db, role, range) {
   const fatturato = round2(appts.filter(a => a.closed).reduce((sum, a) => sum + apptTotalSold(a), 0));
 
   return {
+    commissioniVendita: round2(fatturato * 0.10),
     appuntamentiFissati: fissatiAppts.length,
     presentati,
     chiusi,
@@ -567,6 +568,22 @@ function computeVenditoreStats(db, range) {
     assegnati, presentati, chiusi, persi, noShow, annullati, nonInTarget,
     showRate, conversionRate, totalVenduto, scontrinoMedio, commissioniTot
   };
+}
+
+/**
+ * Pace del mese (richiesto 2026-10-08): commissioni del mese corrente fatte finora,
+ * proiettate su tutto il mese in base ai giorni lavorativi (lun-ven) passati, oggi incluso.
+ * Setter: commissioni totali (show up + chiusure). Venditore: 10% del fatturato del mese.
+ */
+function computeMonthPace(db, role) {
+  const now = new Date();
+  const month = currentPeriodRanges().month;
+  const v = computeFunnelValues(db, role, month);
+  const soFar = role === 'venditore' ? v.commissioniVendita : v.commissioniTot;
+  const total = countWeekdays(month.start, month.end);
+  const elapsed = countWeekdays(month.start, now);
+  const pace = elapsed > 0 ? Math.round(soFar / elapsed * total) : Math.round(soFar);
+  return { soFar: Math.round(soFar), pace, elapsed, total };
 }
 
 /** Numero di giorni feriali (lun-ven) tra due date, incluso entrambi gli estremi — usato
