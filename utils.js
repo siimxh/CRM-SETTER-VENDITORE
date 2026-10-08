@@ -432,7 +432,11 @@ function isMovedAppointment(a) {
 
 function computeFunnelValues(db, role, range) {
   const roleAppts = (db.appointments || []).filter(a => a.role === role);
-  const fissatiAppts = roleAppts.filter(a => isCountedAsNewBooking(a) && inRange(a.createdAt, range));
+  // Setter: fissati = registrati nel periodo (createdAt). Venditore: assegnati = con DATA
+  // APPUNTAMENTO nel periodo (scheduledAt) — Simone, 2026-10-08: gli appuntamenti di fine
+  // settembre inseriti a ottobre finivano negli assegnati di ottobre.
+  const bookingField = role === 'venditore' ? 'scheduledAt' : 'createdAt';
+  const fissatiAppts = roleAppts.filter(a => isCountedAsNewBooking(a) && inRange(a[bookingField], range));
   const appts = roleAppts.filter(a => inRange(a.scheduledAt, range));
   // "Presentati": per il Setter segue presentedStatus (invariato); per il Venditore
   // segue il nuovo dealStage — presentato = isPresented (vedi
@@ -523,8 +527,8 @@ function computeCommissionSummary(db, range) {
  * a quelle già mostrate per le sessioni Setter (conversion rate, ecc.), richieste
  * esplicitamente dall'utente per capire il proprio rendimento sui vari timeframe.
  *
- * - assegnati: appuntamenti Venditore registrati nel periodo (createdAt, stesso criterio
- *   di "Appuntamenti Assegnati" nel funnel — vedi computeFunnelValues).
+ * - assegnati: appuntamenti Venditore con data appuntamento nel periodo (scheduledAt,
+ *   stesso criterio di "Appuntamenti Assegnati" nel funnel — vedi computeFunnelValues).
  * - presentati/chiusi/persi/noShow: filtrati su scheduledAt (quando si è svolto
  *   l'appuntamento), stesso criterio del funnel, ma qui contati sull'intero dataset
  *   Venditore (non solo sul periodo di "assegnazione") così lo show rate/conversion
@@ -541,7 +545,7 @@ function computeVenditoreStats(db, range) {
   const all = (db.appointments || []).filter(a => a.role === 'venditore');
   const inR = (a, field) => !range || inRange(a[field], range);
 
-  const assegnati = all.filter(a => isCountedAsNewBooking(a) && inR(a, 'createdAt')).length;
+  const assegnati = all.filter(a => isCountedAsNewBooking(a) && inR(a, 'scheduledAt')).length; // data appuntamento, vedi computeFunnelValues
   const scoped = all.filter(a => inR(a, 'scheduledAt'));
 
   const noShow = scoped.filter(a => a.dealStage === 'no_show').length;
