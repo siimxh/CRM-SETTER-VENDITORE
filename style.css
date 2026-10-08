@@ -1790,3 +1790,16 @@ body.font-archivo, body.font-archivo h1, body.font-archivo h2, body.font-archivo
 .pace-status.ok { color: var(--success); }
 .pace-status.late { color: var(--warning); }
 .pace-status.dim { color: var(--text-dim); font-weight: 400; }
+
+/* Riquadro "Pace del mese" in Andamento generale. */
+.pace-box-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.pace-box-title { font-size: 1.1rem; font-weight: 700; }
+.pace-box-hint { font-size: 0.8rem; color: var(--text-dim); }
+.pace-box-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pace-box-cell { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; background: var(--bg-elev2); }
+.pace-box-label { font-size: 0.85rem; color: var(--text-dim); }
+.pace-box-num { font-size: 1.9rem; font-weight: 700; line-height: 1.15; color: var(--accent); }
+.pace-box-cell.setter .pace-box-num { color: var(--setter-color); }
+.pace-box-cell.venditore .pace-box-num { color: var(--venditore-color); }
+.pace-box-sub { font-size: 0.8rem; color: var(--text-dim); }
+@media (max-width: 560px) { .pace-box-grid { grid-template-columns: 1fr; } }

@@ -701,6 +701,32 @@ function renderMonthPace(role) {
   </span>`;
 }
 
+/** Riquadro "Pace del mese" (Simone, 2026-10-08) tra il timeframe di Andamento generale
+ * e i numeri: totale, Setter e Venditore. Sempre sul mese corrente. */
+function renderMonthPaceBox() {
+  const ps = computeMonthPace(db, 'setter');
+  const pv = computeMonthPace(db, 'venditore');
+  const cell = (label, p, cls) => `
+    <div class="pace-box-cell ${cls}">
+      <div class="pace-box-label">${label}</div>
+      <div class="pace-box-num">€${p.pace}</div>
+      <div class="pace-box-sub">finora €${p.soFar}</div>
+    </div>`;
+  const tot = { pace: ps.pace + pv.pace, soFar: ps.soFar + pv.soFar };
+  return `
+    <section class="card pace-box">
+      <div class="pace-box-head">
+        <span class="pace-box-title">Pace del mese</span>
+        <span class="pace-box-hint">a questo ritmo chiudi il mese così · giorno lavorativo ${ps.elapsed} di ${ps.total} (lun-ven)</span>
+      </div>
+      <div class="pace-box-grid">
+        ${cell('Totale', tot, 'tot')}
+        ${cell('Setter', ps, 'setter')}
+        ${cell('Venditore', pv, 'venditore')}
+      </div>
+    </section>`;
+}
+
 function renderEyebrows() {
   const t = db.settings.toggles || {};
   const parts = [];
@@ -1054,6 +1080,8 @@ function renderCommissionKpiSection() {
         <button class="btn-ghost" id="btnAndamentoApplyRange">Applica</button>
       </div>` : ''}
     </section>
+
+    ${renderMonthPaceBox()}
 
     <section class="kpi-grid">
       <div class="card kpi-card accented" data-ticker-anchor="1">
