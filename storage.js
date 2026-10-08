@@ -74,26 +74,26 @@ function defaultGoals() {
   };
 }
 
-/** Palette di default "S5 — Graphite & Lime" (vedi anche i preset in app.js). */
+/** Palette di default "Carta" (vedi anche i preset in app.js). */
 function defaultSettings() {
   return {
-    preset: 'graphite-lime',
-    skin: null, // 'carta' — skin di leggibilità del preset omonimo (vedi app.js)
+    preset: 'carta',
     colors: {
-      bg: '#17181a',
-      bgElev: '#1e2022',
-      accent: '#c6ff3d',
-      text: '#f5f6f2',
-      setterColor: '#c6ff3d',
-      venditoreColor: '#7fd9ff',
-      success: '#c6ff3d',
-      danger: '#ff5c5c'
+      bg: '#f3efe7',
+      bgElev: '#fbf9f4',
+      accent: '#2346a0',
+      text: '#22211e',
+      setterColor: '#2346a0',
+      venditoreColor: '#1985ab',
+      success: '#1f6b2e',
+      danger: '#b3261e'
     },
-    radiusStyle: 'sharp',
-    fontStyle: 'archivo',
+    radiusStyle: 'round',
+    fontStyle: 'lexend',
     accentSaturation: 86,
     cardContrast: 70,
-    glowLevel: 'border',
+    glowLevel: 'none',
+    readableV1: true, // vedi migrazione in mergeWithDefaults
     cashDayThreshold: 500,
     toggles: {
       grindMode: false,
@@ -134,7 +134,7 @@ function defaultData() {
     // in app.js. Elenco semplice di { id, label, url, createdAt }, nessun'altra struttura.
     callRecordings: [],
 
-    // --- Round Recupero No Show — sessione fissa/non eliminabile (vedi app.js,
+    // --- Round Recupero Appuntamenti — sessione fissa/non eliminabile (vedi app.js,
     // renderRecoveryRoundScreen e dintorni) per richiamare i lead che hanno fatto no-show
     // sia in Setting (presentedStatus) sia in Venditore (dealStage). Ogni entry è agganciata
     // a un preciso appuntamento sorgente (sourceAppointmentId), non alla "persona" in
@@ -148,7 +148,7 @@ function defaultData() {
 
     // --- "Da richiamare" — lead da ririchiamare creati premendo l'esito "Da richiamare"
     // durante una sessione (vedi app.js, openCallbackModal/logCallAction/logCallbackCall).
-    // Indipendente dal Round Recupero No Show: qui l'orario è scelto dall'utente (quick
+    // Indipendente dal Round Recupero Appuntamenti: qui l'orario è scelto dall'utente (quick
     // button o personalizzato), non una rotazione automatica. Ogni entry:
     // { id, leadName, phone, scheduledAt, createdAt, createdDateKey, leadGroupId,
     //   sourcePipelineId, sourcePipelineName, sourceSessionId, status: 'pending'|'done',
@@ -185,7 +185,7 @@ function migrateAppointment(a) {
     dealStage: null,
     notes: [],
     nextFollowUpDate: null,
-    recoveredFromNoShow: false, // true se creato dal Round Recupero No Show (vedi app.js)
+    recoveredFromNoShow: false, // true se creato dal Round Recupero Appuntamenti (vedi app.js)
     recoveredFromRole: null,    // 'setter' | 'venditore' — dove è avvenuto il no-show originale
 
     // --- Appuntamento spostato (vedi app.js, openRescheduleModal) — il vecchio
@@ -263,6 +263,20 @@ function mergeWithDefaults(parsed) {
   out.settings = Object.assign({}, base.settings, parsed.settings);
   out.settings.colors = Object.assign({}, base.settings.colors, (parsed.settings || {}).colors);
   out.settings.toggles = Object.assign({}, base.settings.toggles, (parsed.settings || {}).toggles);
+
+  // Migrazione una tantum (2026-10): lo stile "Carta" diventa il predefinito per tutti —
+  // chi ha dati salvati col vecchio aspetto passa a Carta (colori, font Lexend, angoli
+  // arrotondati). Dopo può comunque scegliere un altro tema dal builder 🎨.
+  if (!(parsed.settings || {}).readableV1) {
+    const b = base.settings;
+    out.settings.preset = b.preset;
+    out.settings.colors = Object.assign({}, b.colors);
+    out.settings.radiusStyle = b.radiusStyle;
+    out.settings.fontStyle = b.fontStyle;
+    out.settings.glowLevel = b.glowLevel;
+    out.settings.readableV1 = true;
+  }
+  delete out.settings.skin;
 
   out.pipelines = ensureDefaultOutcomesOnPipelines(out.pipelines);
   out.appointments = (parsed.appointments || []).map(migrateAppointment);

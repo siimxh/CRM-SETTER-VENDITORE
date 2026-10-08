@@ -25,8 +25,8 @@
   --radius-md: 0px;
   --bg-image: none;
   --shadow-accent: none;
-  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --heading-font: 'Archivo', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: 'Lexend', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --heading-font: 'Lexend', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --accent-filter: none;
 }
 
@@ -115,7 +115,7 @@ body.radius-mixed .card, body.radius-mixed .kpi-card, body.radius-mixed .modal-b
 }
 
 /* ---------- Font styles (builder) ---------- */
-body.font-mono, body.font-mono h1, body.font-mono h2, body.font-mono h3 { --heading-font: 'JetBrains Mono', monospace; font-family: 'JetBrains Mono', monospace; }
+body.font-mono, body.font-mono h1, body.font-mono h2, body.font-mono h3 { --heading-font: 'JetBrains Mono', monospace; --mono: 'JetBrains Mono', monospace; font-family: 'JetBrains Mono', monospace; }
 body.font-bebas h1, body.font-bebas h2, body.font-bebas h3, body.font-bebas .brand { font-family: 'Bebas Neue', cursive; letter-spacing: 0.03em; }
 body.font-playfair h1, body.font-playfair h2, body.font-playfair h3, body.font-playfair .brand { font-family: 'Playfair Display', serif; }
 body.font-spacemono, body.font-spacemono h1, body.font-spacemono h2, body.font-spacemono h3 { font-family: 'Space Mono', monospace; }
@@ -208,7 +208,7 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Archivo', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Lexend', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   min-height: 100vh;
 }
 
@@ -553,7 +553,7 @@ body.in-session #topbar { display: none; }
   padding: 9px 10px;
   color: var(--text);
   font-size: 0.92rem;
-  font-family: 'Archivo', sans-serif;
+  font-family: inherit;
   text-transform: none;
   letter-spacing: normal;
 }
@@ -931,7 +931,7 @@ body.in-session #topbar { display: none; }
   text-transform: uppercase;
   color: var(--accent);
 }
-/* Variante "distruttiva" (Round Recupero No Show > Rimuovi dal round) — stesso layout
+/* Variante "distruttiva" (Round Recupero Appuntamenti > Rimuovi dal round) — stesso layout
    dell'outcome-btn normale ma tinta di avviso, per distinguerla a colpo d'occhio dalle
    altre azioni che invece tengono il lead nel round. */
 .outcome-btn-danger { color: var(--danger); }
@@ -1301,6 +1301,8 @@ tr.appt-row-moved > td { opacity: 0.6; }
   --stage-perso-bg: rgba(194,59,59,0.16);
   --stage-spostato: #7c5cc4;           /* viola — appuntamento spostato */
   --stage-spostato-bg: rgba(124,92,196,0.16);
+  --stage-non_in_target: #9a6a3a;      /* marrone — presentato ma non in target */
+  --stage-non_in_target-bg: rgba(154,106,58,0.16);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -1344,6 +1346,7 @@ tr.appt-row-moved > td { opacity: 0.6; }
 .deal-stage-select[data-stage="chiuso"] { color: var(--stage-chiuso); background: var(--stage-chiuso-bg); border-color: var(--stage-chiuso); }
 .deal-stage-select[data-stage="perso"] { color: var(--stage-perso); background: var(--stage-perso-bg); border-color: var(--stage-perso); }
 .deal-stage-select[data-stage="spostato"] { color: var(--stage-spostato); background: var(--stage-spostato-bg); border-color: var(--stage-spostato); }
+.deal-stage-select[data-stage="non_in_target"] { color: var(--stage-non_in_target); background: var(--stage-non_in_target-bg); border-color: var(--stage-non_in_target); }
 
 .vnd-actions-cell { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .vnd-note-btn, .vnd-followup-btn {
@@ -1585,7 +1588,7 @@ tr.appt-row-moved > td { opacity: 0.6; }
 .switch input:checked + .switch-track::before { transform: translate(18px, -50%); background: var(--accent); }
 
 /* ============================================================================
- * Round Recupero No Show — card d'ingresso fissa (Setting > Sessioni) + schermata a
+ * Round Recupero Appuntamenti — card d'ingresso fissa (Setting > Sessioni) + schermata a
  * schermo intero (riusa .session-screen/.session-topbar/.outcome-grid già definiti
  * sopra per lo stesso linguaggio visivo delle sessioni di chiamata normali).
  * ==========================================================================*/
@@ -1726,34 +1729,44 @@ body.in-session #confirmAlertBanner { display: none; }
 
 
 /* ============================================================================
-   SKIN di leggibilità — preset "Carta" del builder 🎨 (rebranding
-   richiesto dall'utente: dopo ore di schermo fa fatica a leggere i dati).
-   Attivate da html[data-skin] (vedi app.js:applyTheme). Stanno in fondo al file così
-   battono sia la palette chiara sia quella scura di sistema.
+   LEGGIBILITÀ — base di tutto il tool (ex skin "Carta", resa predefinita su
+   richiesta esplicita dell'utente: dopo ore di schermo faceva fatica a leggere).
    - testo ~18% più grande ovunque (tutto il CSS è in rem);
-   - un solo font molto leggibile, anche per numeri ed etichette (niente monospace);
    - niente MAIUSCOLETTO e niente spaziatura larga tra le lettere;
-   - testo secondario più scuro, per un contrasto alto ma non sparato.
+   - il testo sopra le superfici piene di accento usa --on-accent (bianco su
+     accenti scuri, quasi nero su accenti chiari: vedi app.js:applyTheme).
+   Il font di base è Lexend (vedi --mono/--heading-font in :root e html, body).
    ============================================================================ */
-html[data-skin] { font-size: 118%; }
-html[data-skin] body, html[data-skin] body * {
+html { font-size: 118%; }
+body, body * {
   text-transform: none !important;
   letter-spacing: normal !important;
 }
-html[data-skin] body { line-height: 1.45; }
+body { line-height: 1.45; }
 
-html[data-skin="carta"] {
-  --text-dim: #5e5a52;
-  --warning: #7a4b00;
-  --mono: 'Lexend', sans-serif;
-  --heading-font: 'Lexend', sans-serif;
+.tf-tab.active,
+.crm-chip.active,
+.chip-select.active,
+.pill.active,
+.btn-primary { color: var(--on-accent, #fff) !important; }
+
+/* Builder: font "Archivo" (lo storico di base) ora è un'opzione come le altre. */
+body.font-archivo, body.font-archivo h1, body.font-archivo h2, body.font-archivo h3 { --heading-font: 'Archivo', sans-serif; --mono: 'Archivo', sans-serif; font-family: 'Archivo', sans-serif; }
+
+/* Esito Setter a tendina (stessi colori del calendario/chip). */
+.setter-status-select[data-pstatus="no"] { color: var(--text-dim); background: var(--bg-elev2); border-color: var(--border); }
+.setter-status-select[data-pstatus="confirmed24h"] { color: var(--stage-trattativa); background: var(--stage-trattativa-bg); border-color: var(--stage-trattativa); }
+.setter-status-select[data-pstatus="presented"] { color: var(--stage-contratto_firmato); background: var(--stage-contratto_firmato-bg); border-color: var(--stage-contratto_firmato); }
+.setter-status-select[data-pstatus="no_show"] { color: var(--stage-no_show); background: var(--stage-no_show-bg); border-color: var(--stage-no_show); }
+.setter-status-select[data-pstatus="annullato"] { color: var(--stage-annullato); background: var(--stage-annullato-bg); border-color: var(--stage-annullato); }
+.setter-status-select[data-pstatus="spostato"] { color: var(--stage-spostato); background: var(--stage-spostato-bg); border-color: var(--stage-spostato); }
+
+/* Colori stato in base al tono del TEMA (app.js:applyTheme imposta data-tone). */
+:root[data-tone="light"] {
+  --stage-no_show: #8a6200; --stage-annullato: #5e605a; --stage-trattativa: #156f90;
+  --stage-contratto_firmato: #3d6f00; --stage-chiuso: #1f5c1f; --stage-perso: #b3261e; --stage-spostato: #6a4bb8; --stage-non_in_target: #7a4f22;
 }
-html[data-skin="carta"] body, html[data-skin="carta"] body * { font-family: 'Lexend', sans-serif !important; }
-
-/* Nelle skin l'accento è un blu scuro: il testo sopra le superfici piene di accento
-   va bianco (nelle palette lime/ambra era nero). */
-html[data-skin] .tf-tab.active,
-html[data-skin] .crm-chip.active,
-html[data-skin] .chip-select.active,
-html[data-skin] .pill.active,
-html[data-skin] .btn-primary { color: #fff !important; }
+:root[data-tone="dark"] {
+  --stage-no_show: #e0b23d; --stage-annullato: #9a9d9f; --stage-trattativa: #7fd9ff;
+  --stage-contratto_firmato: #9be564; --stage-chiuso: #4ade80; --stage-perso: #ff7a6b; --stage-spostato: #b49cff; --stage-non_in_target: #e0a96d;
+}

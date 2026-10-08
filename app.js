@@ -96,7 +96,58 @@ async function initFirebaseSyncOnLoad() {
  * Builder / Tema — preset, colori custom, radius, font, glow, saturazione/contrasto
  * ==========================================================================*/
 
+/**
+ * Preset colore del builder 🎨. "Carta" è il predefinito (scelto dall'utente perché è
+ * quello che gli stanca meno gli occhi); per lo stesso motivo quasi tutti i temi NON
+ * hanno sfondo bianco puro: solo due chiari "freddi", gli altri caldi/tenui o scuri.
+ * radiusStyle/glowLevel facoltativi: se presenti vengono applicati insieme ai colori.
+ */
 const THEME_PRESETS = {
+  'carta': {
+    label: 'Carta',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#f3efe7', bgElev: '#fbf9f4', accent: '#2346a0', text: '#22211e', setterColor: '#2346a0', venditoreColor: '#1985ab', success: '#1f6b2e', danger: '#b3261e' }
+  },
+  'sabbia': {
+    label: 'Sabbia',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#ebe5d8', bgElev: '#f4efe4', accent: '#8a4b16', text: '#2a241c', setterColor: '#8a4b16', venditoreColor: '#2d6a8a', success: '#3d6b22', danger: '#a8321f' }
+  },
+  'salvia': {
+    label: 'Salvia',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#e4e9e2', bgElev: '#eef2ec', accent: '#2f6b4f', text: '#1c2620', setterColor: '#2f6b4f', venditoreColor: '#3a5f8f', success: '#2f6b4f', danger: '#a8321f' }
+  },
+  'nebbia': {
+    label: 'Nebbia',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#e6e9ef', bgElev: '#f0f2f6', accent: '#3b4fa0', text: '#1c2130', setterColor: '#3b4fa0', venditoreColor: '#a0583b', success: '#2f7a4f', danger: '#b3261e' }
+  },
+  'notte-morbida': {
+    label: 'Notte Morbida',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#1b1c20', bgElev: '#24262b', accent: '#f2b66d', text: '#eceae4', setterColor: '#f2b66d', venditoreColor: '#8ec5ff', success: '#8fd19e', danger: '#ff7a6b' }
+  },
+  'ardesia': {
+    label: 'Ardesia',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#1a1f27', bgElev: '#232a35', accent: '#8ab4f8', text: '#e6eaf0', setterColor: '#8ab4f8', venditoreColor: '#f2b66d', success: '#8fd19e', danger: '#ff7a6b' }
+  },
+  'bosco': {
+    label: 'Bosco',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#18201b', bgElev: '#212b24', accent: '#9ed69a', text: '#e5ece5', setterColor: '#9ed69a', venditoreColor: '#e8c07a', success: '#9ed69a', danger: '#ff8a7a' }
+  },
+  'prugna': {
+    label: 'Prugna',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#1f1a22', bgElev: '#2a232e', accent: '#d7a6e8', text: '#eee8f0', setterColor: '#d7a6e8', venditoreColor: '#8ec5ff', success: '#9ed69a', danger: '#ff8a7a' }
+  },
+  'oceano': {
+    label: 'Oceano',
+    radiusStyle: 'round', glowLevel: 'none',
+    colors: { bg: '#12202a', bgElev: '#1a2b37', accent: '#6fd3c9', text: '#e3eef2', setterColor: '#6fd3c9', venditoreColor: '#f2b66d', success: '#8fd19e', danger: '#ff8a7a' }
+  },
   'graphite-lime': {
     label: 'Graphite Lime',
     colors: { bg: '#17181a', bgElev: '#1e2022', accent: '#c6ff3d', text: '#f5f6f2', setterColor: '#c6ff3d', venditoreColor: '#7fd9ff', success: '#c6ff3d', danger: '#ff5c5c' }
@@ -105,32 +156,25 @@ const THEME_PRESETS = {
     label: 'Slate Amber',
     colors: { bg: '#12141a', bgElev: '#1a1d24', accent: '#f5a524', text: '#f2f3f6', setterColor: '#f5a524', venditoreColor: '#7fd9ff', success: '#4ade80', danger: '#ff5c5c' }
   },
-  'paper-emerald': {
-    label: 'Paper Emerald',
-    colors: { bg: '#f7f7f5', bgElev: '#ffffff', accent: '#0f7a5c', text: '#111813', setterColor: '#0f7a5c', venditoreColor: '#1985ab', success: '#0f7a5c', danger: '#c23b3b' }
-  },
   'navy-gold': {
     label: 'Navy Gold',
     colors: { bg: '#0b1220', bgElev: '#131c30', accent: '#d4a94a', text: '#f2f4f8', setterColor: '#d4a94a', venditoreColor: '#7fd9ff', success: '#4ade80', danger: '#ff5c5c' }
   },
+  // I due chiari "freddi": niente più card in bianco puro (#fff), troppo abbagliante.
+  'paper-emerald': {
+    label: 'Paper Emerald',
+    colors: { bg: '#eef0ec', bgElev: '#f8f9f6', accent: '#0f7a5c', text: '#111813', setterColor: '#0f7a5c', venditoreColor: '#1985ab', success: '#0f7a5c', danger: '#c23b3b' }
+  },
   'cobalt-light': {
     label: 'Cobalt Light',
-    colors: { bg: '#f4f6fb', bgElev: '#ffffff', accent: '#3355ff', text: '#0e1220', setterColor: '#3355ff', venditoreColor: '#0f7a5c', success: '#0f7a5c', danger: '#c23b3b' }
-  },
-  // Rebranding "leggibilità" (proposta 2, scelta dall'utente tra quelle richieste dall'utente perché dopo ore di
-  // schermo fa fatica a leggere i dati). Oltre ai colori portano una "skin" (vedi
-  // applyTheme e la sezione SKIN in fondo a style.css): font più leggibile, testo più
-  // grande, niente maiuscoletto/monospace nelle etichette, contrasto del testo secondario.
-  'carta': {
-    label: 'Carta (leggibile)',
-    skin: 'carta', radiusStyle: 'round', glowLevel: 'none',
-    colors: { bg: '#f3efe7', bgElev: '#fbf9f4', accent: '#2346a0', text: '#22211e', setterColor: '#2346a0', venditoreColor: '#1985ab', success: '#1f6b2e', danger: '#b3261e' }
+    colors: { bg: '#eceff6', bgElev: '#f7f8fc', accent: '#3355ff', text: '#0e1220', setterColor: '#3355ff', venditoreColor: '#0f7a5c', success: '#0f7a5c', danger: '#c23b3b' }
   }
 };
 
 const RADIUS_STYLES = ['none', 'sharp', 'soft', 'round', 'pill', 'cut', 'bracket', 'mixed'];
 const FONT_STYLES = [
-  { id: 'archivo', label: 'Archivo', cls: '' },
+  { id: 'lexend', label: 'Lexend (leggibile)', cls: '' },   // predefinito — vedi sezione LEGGIBILITÀ in style.css
+  { id: 'archivo', label: 'Archivo', cls: 'font-archivo' },
   { id: 'mono', label: 'JetBrains Mono', cls: 'font-mono' },
   { id: 'bebas', label: 'Bebas Neue', cls: 'font-bebas' },
   { id: 'playfair', label: 'Playfair Display', cls: 'font-playfair' },
@@ -148,6 +192,13 @@ function shadeHex(hex, pct) {
   const mix = (ch) => Math.max(0, Math.min(255, Math.round(ch + (pct >= 0 ? (255 - ch) : ch) * pct)));
   r = mix(r); g = mix(g); b = mix(b);
   return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+/** Mescola due colori hex: t=0 -> a, t=1 -> b. */
+function mixHex(a, b, t) {
+  const p = (h) => { const c = h.replace('#', ''); const n = parseInt(c.length === 3 ? c.split('').map(x => x + x).join('') : c, 16); return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]; };
+  const x = p(a), y = p(b);
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
 }
 
 function hexToRgba(hex, alpha) {
@@ -181,9 +232,16 @@ function applyTheme(settings) {
   }
   if (c.text) root.style.setProperty('--text', c.text);
 
-  // Skin di leggibilità (preset Carta): vedi la sezione SKIN in fondo a style.css.
-  if (settings.skin) root.setAttribute('data-skin', settings.skin);
-  else root.removeAttribute('data-skin');
+  // Testo secondario, avvisi e testo sopra l'accento derivati dal tema scelto (non dalla
+  // palette chiara/scura del sistema): così un tema chiaro su un PC in modalità scura
+  // non si ritrova testo grigio chiaro illeggibile, e viceversa.
+  if (c.text && c.bg) root.style.setProperty('--text-dim', mixHex(c.text, c.bg, 0.38));
+  if (c.bg) root.style.setProperty('--warning', isDarkColor(c.bg) ? '#f0b429' : '#8a5a00');
+  if (c.accent) root.style.setProperty('--on-accent', isDarkColor(c.accent) ? '#ffffff' : '#141414');
+  root.removeAttribute('data-skin'); // vecchia skin "Carta", ora base di tutto il tool
+  // Colori degli stati (No Show, Spostato, ...) chiari o scuri in base allo SFONDO del
+  // tema scelto, non alla modalità chiara/scura del sistema (vedi fondo di style.css).
+  if (c.bg) root.setAttribute('data-tone', isDarkColor(c.bg) ? 'dark' : 'light');
   if (c.setterColor) root.style.setProperty('--setter-color', c.setterColor);
   if (c.venditoreColor) root.style.setProperty('--venditore-color', c.venditoreColor);
   if (c.success) root.style.setProperty('--success', c.success);
@@ -1761,7 +1819,7 @@ function renderSessioneDetail(id) {
 }
 
 /* ============================================================================
- * Round Recupero No Show — sessione FISSA e non eliminabile (non è una pipeline
+ * Round Recupero Appuntamenti — sessione FISSA e non eliminabile (non è una pipeline
  * editabile: vive del tutto fuori dal sistema db.pipelines/db.sessions), richiesta
  * esplicitamente dall'utente per richiamare sistematicamente i lead che hanno fatto
  * no-show sia lato Setting (presentedStatus) sia lato Venditore (dealStage).
@@ -1794,18 +1852,19 @@ function renderSessioneDetail(id) {
  */
 
 /**
- * Aggiunge (o mantiene) un appuntamento come lead attivo nel Round Recupero No Show,
+ * Aggiunge (o mantiene) un appuntamento come lead attivo nel Round Recupero Appuntamenti,
  * quando viene marcato "No Show" — sia da Setting sia da Venditore. Non duplica se
  * esiste già una entry ATTIVA per lo stesso appuntamento (es. click ripetuto).
  */
-function addToRecoveryRound(apt, role) {
+function addToRecoveryRound(apt, role, reason) {
   db.recoveryRound = db.recoveryRound || [];
   const existingActive = db.recoveryRound.find(l => l.sourceAppointmentId === apt.id && l.status === 'active');
   if (existingActive) return;
   db.recoveryRound.push({
     id: uid('recov'),
     sourceAppointmentId: apt.id,
-    sourceRole: role, // 'setter' | 'venditore' — dove è avvenuto QUESTO no-show
+    sourceRole: role, // 'setter' | 'venditore' — dove è avvenuto QUESTO no-show/annullamento
+    sourceReason: reason || 'no_show', // 'no_show' | 'annullato'
     clientName: apt.clientName || '',
     phone: apt.phone || '',
     status: 'active', // 'active' | 'resolved' (appuntamento rifissato) | 'removed' (tolto dal round)
@@ -1848,8 +1907,8 @@ function renderRecoveryRoundEntryCard() {
   return `
     <section class="card recov-entry-card">
       <div class="recov-entry-info">
-        <h3>🔁 Round Recupero No Show</h3>
-        <p class="text-dim" style="font-size:0.84rem;">Richiama i lead che hanno fatto no-show (da Setting o da Venditore), un lead a caso alla volta, finché tutti non sono stati sentiti almeno una volta.</p>
+        <h3>🔁 Round Recupero Appuntamenti</h3>
+        <p class="text-dim" style="font-size:0.84rem;">Richiama i lead che hanno fatto no-show o hanno annullato (da Setting o da Venditore), un lead a caso alla volta, finché tutti non sono stati sentiti almeno una volta.</p>
       </div>
       <div class="recov-entry-action">
         <div class="recov-entry-count">${waiting}</div>
@@ -1894,7 +1953,7 @@ function renderRecoveryRoundScreen() {
       <div class="session-screen">
         <div class="session-topbar">
           <button id="btnExitRecoveryRound" class="btn-danger-ghost">■ Esci dal round</button>
-          <div class="session-pipeline-name">🔁 Round Recupero No Show</div>
+          <div class="session-pipeline-name">🔁 Round Recupero Appuntamenti</div>
           <div></div>
         </div>
         <div class="card" style="text-align:center; padding:60px 20px;">
@@ -1909,7 +1968,7 @@ function renderRecoveryRoundScreen() {
   const srcApt = db.appointments.find(a => a.id === lead.sourceAppointmentId);
   const displayName = (srcApt && srcApt.clientName) || lead.clientName || '(senza nome)';
   const displayPhone = (srcApt && srcApt.phone) || lead.phone || '';
-  const roleLabel = lead.sourceRole === 'venditore' ? 'No Show da Venditore' : 'No Show da Setting';
+  const roleLabel = (lead.sourceReason === 'annullato' ? 'Annullato' : 'No Show') + (lead.sourceRole === 'venditore' ? ' da Venditore' : ' da Setting');
 
   const notes = [...(lead.notes || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const notesHtml = notes.length ? notes.map(n => `
@@ -1922,7 +1981,7 @@ function renderRecoveryRoundScreen() {
     <div class="session-screen">
       <div class="session-topbar">
         <button id="btnExitRecoveryRound" class="btn-danger-ghost">■ Esci dal round</button>
-        <div class="session-pipeline-name">🔁 Round Recupero No Show</div>
+        <div class="session-pipeline-name">🔁 Round Recupero Appuntamenti</div>
         <div></div>
       </div>
 
@@ -2035,7 +2094,7 @@ function applyRecoveryOutcome(leadId, outcome) {
  * (nome/telefono/data-ora), ma qui in un modal perché lo schermo del round non ha una
  * tabella. L'appuntamento nasce SEMPRE in Setting (role:'setter'), anche se il no-show
  * originale veniva da Venditore — richiesto esplicitamente dall'utente — con l'etichetta
- * "Recuperato da no show" (vedi recoveredFromNoShow/recoveredFromRole e renderApptRow).
+ * "Recuperato" (vedi recoveredFromNoShow/recoveredFromRole e renderApptRow).
  * Il lead viene marcato 'resolved' (esce dal pool attivo del round).
  */
 function openRecoveryAppointmentModal(leadId) {
@@ -2047,8 +2106,8 @@ function openRecoveryAppointmentModal(leadId) {
   const nowLocal = new Date().toISOString().slice(0, 16);
 
   openModal(`
-    <h3>Appuntamento fissato — recupero No Show</h3>
-    <p class="text-dim" style="font-size:0.85rem;">Va sempre in Setting, con l'etichetta "Recuperato da no show".</p>
+    <h3>Appuntamento fissato — recupero appuntamento</h3>
+    <p class="text-dim" style="font-size:0.85rem;">Va sempre in Setting, con l'etichetta "Recuperato".</p>
     <label class="field">Nome e cognome<input type="text" id="recovApptName" value="${escapeHtml(prefillName)}" placeholder="Nome e cognome"></label>
     <label class="field">Telefono<input type="text" id="recovApptPhone" value="${escapeHtml(prefillPhone)}" placeholder="Telefono (facoltativo)"></label>
     <label class="field">Data e ora appuntamento<input type="datetime-local" id="recovApptWhen" value="${nowLocal}"></label>
@@ -2096,9 +2155,9 @@ function openRecoveryAppointmentModal(leadId) {
  * esplicitamente dall'utente per rendere più efficace la procedura di conferma 24h
  * prima dell'appuntamento. Due punti d'ingresso (vedi db.confirmRoundReturnMode):
  * - "standalone": tasto dedicato in cima ad Appuntamenti (riga 2, sotto il Round
- *   Recupero No Show) — alla fine si chiude e basta, si torna ad Appuntamenti;
+ *   Recupero Appuntamenti) — alla fine si chiude e basta, si torna ad Appuntamenti;
  * - "session": proposto con un Sì/No ogni volta che si avvia una sessione NORMALE
- *   (qualunque pipeline — non il Round Recupero No Show, non una chiamata di
+ *   (qualunque pipeline — non il Round Recupero Appuntamenti, non una chiamata di
  *   richiamo), SOLO se ci sono appuntamenti di domani da confermare — vedi
  *   startSessionAction. Alla fine prosegue automaticamente nella sessione scelta
  *   (vedi exitConfirmRound/beginPipelineSession).
@@ -2149,7 +2208,7 @@ function getPendingConfirmAppointments() {
   );
 }
 
-/** Stessa rotazione "equa" del Round Recupero No Show: mai mostrato -> a caso tra questi,
+/** Stessa rotazione "equa" del Round Recupero Appuntamenti: mai mostrato -> a caso tra questi,
  * altrimenti il meno recentemente mostrato. */
 function pickNextConfirmAppt() {
   const pending = getPendingConfirmAppointments();
@@ -2189,7 +2248,7 @@ function appendConfirmCallToSession(callRecord) {
 
 /**
  * Card d'ingresso al Round Conferme — riga 2 dei "round launcher" in cima ad
- * Appuntamenti, sotto quella del Round Recupero No Show (vedi renderAppuntamenti).
+ * Appuntamenti, sotto quella del Round Recupero Appuntamenti (vedi renderAppuntamenti).
  */
 function renderConfirmRoundEntryCard() {
   const waiting = getPendingConfirmAppointments().length;
@@ -2415,7 +2474,7 @@ function applyConfirmOutcome(apptId, outcome) {
       groupId: apt.confirmGroupId, isConfirmCall: true
     });
     apt.presentedStatus = 'annullato';
-    deactivateRecoveryEntryForAppointment(apt);
+    addToRecoveryRound(apt, 'setter', 'annullato');
     apt.confirmLastInteractionAt = now;
     apt.confirmCallAttempts = 0;
     apt.confirmRetryPending = false;
@@ -2611,7 +2670,7 @@ function newAppointment(role) {
     dealStage: null,          // solo Venditore — vedi DEAL_STAGES
     notes: [],                // solo Venditore — { id, text, author, createdAt }
     nextFollowUpDate: null,   // solo Venditore — YYYY-MM-DD (solo data, non ora)
-    recoveredFromNoShow: false, // true se creato dal Round Recupero No Show
+    recoveredFromNoShow: false, // true se creato dal Round Recupero Appuntamenti
     recoveredFromRole: null,    // 'setter' | 'venditore' — ruolo in cui è avvenuto il no-show originale
     rescheduledFromId: null,    // vedi openRescheduleModal — appuntamento da cui è stato spostato
     rescheduledToId: null,      // vedi openRescheduleModal — nuovo appuntamento creato dallo spostamento
@@ -2637,6 +2696,9 @@ const DEAL_STAGES = [
   { key: 'contratto_firmato', label: 'Contratto Firmato', color: 'mint',     isClosed: true,  isPresented: true },
   { key: 'chiuso',            label: 'Chiuso',            color: 'forest',   isClosed: true,  isPresented: true },
   { key: 'perso',             label: 'Perso',             color: 'crimson',  isClosed: false, isPresented: true },
+  // "Non in target": il lead si è presentato (conta come show) ma non era in target —
+  // escluso dal closing/conversion rate (vedi utils.js computeVenditoreStats).
+  { key: 'non_in_target',     label: 'Non in target',     color: 'brown',    isClosed: false, isPresented: true, excludeFromClosing: true },
   // "Spostato": l'appuntamento non si è svolto in questa data ma è stato riprogrammato —
   // né presentato né no-show. Selezionarlo apre openRescheduleModal (nuova data).
   { key: 'spostato',          label: 'Spostato',          color: 'violet',   isClosed: false, isPresented: false }
@@ -2891,15 +2953,15 @@ function wireCrmSearchInput(inputId, stateKey, renderFn) {
  * recupero — vedi il filtro "Solo No Show" in renderAppuntamenti.
  */
 function renderApptRow(a) {
+  // Esito Setter come menu a tendina colorato, stesso stile dello "Stato trattativa"
+  // del Venditore (richiesto dall'utente al posto della fila di bottoni).
+  const presentedOptions = Object.entries(SETTER_PRESENTED_LABEL).map(([key, label]) =>
+    `<option value="${key}" ${a.presentedStatus === key ? 'selected' : ''}>${escapeHtml(label)}</option>`
+  ).join('');
   const presentedChips = `
-      <div class="crm-chip-group">
-        <button class="crm-chip ${a.presentedStatus === 'no' ? 'active' : ''}" data-set-presented="${a.id}" data-val="no">No</button>
-        <button class="crm-chip ${a.presentedStatus === 'confirmed24h' ? 'active' : ''}" data-set-presented="${a.id}" data-val="confirmed24h">Confermato24h</button>
-        <button class="crm-chip ${a.presentedStatus === 'presented' ? 'active' : ''}" data-set-presented="${a.id}" data-val="presented">Presentato</button>
-        <button class="crm-chip danger-chip ${a.presentedStatus === 'no_show' ? 'active' : ''}" data-set-presented="${a.id}" data-val="no_show">No Show</button>
-        <button class="crm-chip annullato-chip ${a.presentedStatus === 'annullato' ? 'active' : ''}" data-set-presented="${a.id}" data-val="annullato">Annullato</button>
-        <button class="crm-chip spostato-chip ${a.presentedStatus === 'spostato' ? 'active' : ''}" data-set-presented="${a.id}" data-val="spostato">Spostato</button>
-      </div>`;
+      <select class="deal-stage-select setter-status-select" data-pstatus="${a.presentedStatus || 'no'}" data-set-presented-sel="${a.id}">
+        ${presentedOptions}
+      </select>`;
 
   const closedChips = `
       <div class="crm-chip-group">
@@ -2910,7 +2972,7 @@ function renderApptRow(a) {
   const totalSold = apptTotalSold(a);
   const linkNote = a.linkedAppointmentId ? `<div class="crm-link-note">collegato</div>` : '';
   const recoveredBadge = a.recoveredFromNoShow
-    ? `<span class="badge recov-badge" title="Nato dal Round Recupero No Show (no-show originale da ${a.recoveredFromRole === 'venditore' ? 'Venditore' : 'Setting'})">↻ Recuperato da no show</span>`
+    ? `<span class="badge recov-badge" title="Nato dal Round Recupero Appuntamenti (appuntamento originale da ${a.recoveredFromRole === 'venditore' ? 'Venditore' : 'Setting'})">↻ Recuperato</span>`
     : '';
 
   return `
@@ -2974,16 +3036,17 @@ function wireAppuntamentiEvents() {
     });
   });
 
-  appRoot.querySelectorAll('[data-set-presented]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const apt = db.appointments.find(x => x.id === btn.dataset.setPresented);
+  appRoot.querySelectorAll('[data-set-presented-sel]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const apt = db.appointments.find(x => x.id === sel.dataset.setPresentedSel);
       if (!apt) return;
-      const val = btn.dataset.val;
+      const val = sel.value;
       // "Spostato" non cambia subito lo stato: apre la finestra per la nuova data e
       // crea il nuovo appuntamento (vedi openRescheduleModal). Se si annulla, resta tutto com'era.
       if (val === 'spostato') {
-        if (apt.presentedStatus === 'spostato') { showToast('Questo appuntamento è già stato spostato.'); return; }
+        if (apt.presentedStatus === 'spostato') return;
         openRescheduleModal(apt.id, renderAppuntamenti);
+        renderAppuntamenti(); // rimette la tendina allo stato attuale finché non si salva
         return;
       }
       apt.presentedStatus = val;
@@ -2993,9 +3056,9 @@ function wireAppuntamentiEvents() {
       // prima (es. oggi 10, appuntamento del 6): le commissioni derivate (show-up,
       // cash collected) vanno segnate al 6, non al giorno del click.
       apt.presentedAt = val === 'presented' ? apt.scheduledAt : apt.presentedAt;
-      // No Show da Setting -> entra (o resta) nel Round Recupero No Show; qualunque altro
+      // No Show da Setting -> entra (o resta) nel Round Recupero Appuntamenti; qualunque altro
       // stato disattiva l'eventuale entry attiva (es. click corretto per errore).
-      if (val === 'no_show') addToRecoveryRound(apt, 'setter');
+      if (val === 'no_show' || val === 'annullato') addToRecoveryRound(apt, 'setter', val);
       else deactivateRecoveryEntryForAppointment(apt);
       persist();
       renderAppuntamenti();
@@ -3109,9 +3172,9 @@ function applyDealStage(apt, stageKey) {
   apt.closed = !!(def && def.isClosed);
   if (apt.closed && !apt.closedAt) apt.closedAt = new Date().toISOString();
   if (!apt.closed) apt.closedAt = null;
-  // No Show da Venditore -> entra (o resta) nel Round Recupero No Show; qualunque altro
+  // No Show da Venditore -> entra (o resta) nel Round Recupero Appuntamenti; qualunque altro
   // stato disattiva l'eventuale entry attiva (es. correzione di un click sbagliato).
-  if (stageKey === 'no_show') addToRecoveryRound(apt, 'venditore');
+  if (stageKey === 'no_show' || stageKey === 'annullato') addToRecoveryRound(apt, 'venditore', stageKey);
   else deactivateRecoveryEntryForAppointment(apt);
   persist();
 
@@ -3618,6 +3681,7 @@ function renderVenditoreStatistiche() {
         <div class="bar-row"><div class="bar-label">Persi</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.persi, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.persi}</div></div>
         <div class="bar-row"><div class="bar-label">No Show</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.noShow, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.noShow}</div></div>
         <div class="bar-row"><div class="bar-label">Annullati</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.annullati, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.annullati}</div></div>
+        <div class="bar-row"><div class="bar-label">Non in target</div><div class="bar-track"><div class="bar-fill" style="width:${pct(stats.nonInTarget, stats.assegnati || 1)}%"></div></div><div class="bar-value">${stats.nonInTarget}</div></div>
       </div>
     </section>
   `;
@@ -5065,7 +5129,6 @@ function wireBuilderEvents() {
       if (!preset) return;
       db.settings.preset = el.dataset.preset;
       db.settings.colors = Object.assign({}, preset.colors);
-      db.settings.skin = preset.skin || null;
       if (preset.radiusStyle) db.settings.radiusStyle = preset.radiusStyle;
       if (preset.glowLevel) db.settings.glowLevel = preset.glowLevel;
       persist();

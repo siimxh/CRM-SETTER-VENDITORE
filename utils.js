@@ -532,7 +532,8 @@ function computeCommissionSummary(db, range) {
  *   lead era stato assegnato.
  * - showRate: presentati / (presentati + noShow) — quanti dei lead che dovevano
  *   presentarsi si sono davvero presentati.
- * - conversionRate: chiusi (contratto_firmato + chiuso) / presentati — quanti dei
+ * - conversionRate: chiusi (contratto_firmato + chiuso) / presentati in target (esclusi
+ *   i "Non in target") — quanti dei
  *   presentati si chiudono.
  * - scontrinoMedio: totale venduto (su appuntamenti chiusi) / numero di chiusi.
  */
@@ -546,13 +547,16 @@ function computeVenditoreStats(db, range) {
   const noShow = scoped.filter(a => a.dealStage === 'no_show').length;
   const persi = scoped.filter(a => a.dealStage === 'perso').length;
   const annullati = scoped.filter(a => a.dealStage === 'annullato').length;
+  const nonInTarget = scoped.filter(a => a.dealStage === 'non_in_target').length;
   const presentati = scoped.filter(a => a.dealStage && dealStageDef(a.dealStage) && dealStageDef(a.dealStage).isPresented).length;
   const chiusiAppts = scoped.filter(a => a.closed);
   const chiusi = chiusiAppts.length;
 
   const showRateBase = presentati + noShow;
   const showRate = showRateBase > 0 ? pct(presentati, showRateBase) : 0;
-  const conversionRate = presentati > 0 ? pct(chiusi, presentati) : 0;
+  // "Non in target" conta come presentato (show rate) ma NON entra nel closing rate.
+  const presentatiInTarget = scoped.filter(a => a.dealStage && dealStageDef(a.dealStage) && dealStageDef(a.dealStage).isPresented && !dealStageDef(a.dealStage).excludeFromClosing).length;
+  const conversionRate = presentatiInTarget > 0 ? pct(chiusi, presentatiInTarget) : 0;
 
   const totalVenduto = chiusiAppts.reduce((s, a) => s + apptTotalSold(a), 0);
   const scontrinoMedio = chiusi > 0 ? round2(totalVenduto / chiusi) : 0;
@@ -561,7 +565,7 @@ function computeVenditoreStats(db, range) {
   const commissioniTot = sumEvents(commEvents);
 
   return {
-    assegnati, presentati, chiusi, persi, noShow, annullati,
+    assegnati, presentati, chiusi, persi, noShow, annullati, nonInTarget,
     showRate, conversionRate, totalVenduto, scontrinoMedio, commissioniTot
   };
 }
