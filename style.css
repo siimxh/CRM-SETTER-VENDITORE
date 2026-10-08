@@ -743,6 +743,7 @@ body.in-session #topbar { display: none; }
 .session-callback-item-name { font-weight: 700; font-size: 0.88rem; }
 .session-callback-item-phone { font-family: var(--mono); font-size: 0.72rem; color: var(--text-dim); }
 .session-callback-item-when { font-family: var(--mono); font-size: 0.7rem; color: var(--accent); margin-top: 2px; }
+.session-callback-item-when.overdue { color: var(--danger); font-weight: 700; }
 .session-callback-item-btn {
   margin-top: 8px;
   align-self: flex-start;

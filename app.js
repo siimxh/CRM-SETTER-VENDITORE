@@ -4087,11 +4087,13 @@ function renderSessioneAttiva() {
     </div>
   ` : '';
 
-  // Lead "Da richiamare" creati IN QUESTA sessione, ancora in attesa (status 'pending'),
-  // in ordine cronologico per data/ora di richiamo — richiesto esplicitamente dall'utente,
-  // indipendentemente dal fatto che siano programmati per oggi o per un giorno futuro.
+  // Lead "Da richiamare" ancora in attesa (status 'pending'), in ordine di data/ora:
+  // - TUTTI quelli in scadenza entro oggi, compresi gli arretrati dei giorni prima mai
+  //   richiamati, da qualunque sessione (Simone, 2026-10-08: devono restare sempre visibili);
+  // - più quelli creati in QUESTA sessione, anche se programmati per un giorno futuro.
+  const endToday = endOfDay(new Date());
   const sessionCallbacks = (db.callbacks || [])
-    .filter(c => c.sourceSessionId === s.id && c.status === 'pending')
+    .filter(c => c.status === 'pending' && (c.sourceSessionId === s.id || new Date(c.scheduledAt) <= endToday))
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
   const sidebarHtml = sessionCallbacks.length ? renderSessionCallbackSidebar(sessionCallbacks) : '';
 
@@ -4163,12 +4165,12 @@ function renderSessionCallbackSidebar(sessionCallbacks) {
     <div class="session-callback-item">
       <div class="session-callback-item-name">${escapeHtml(cb.leadName)}</div>
       ${cb.phone ? `<div class="session-callback-item-phone">${escapeHtml(cb.phone)}</div>` : ''}
-      <div class="session-callback-item-when">${fmtDateTime(cb.scheduledAt)}</div>
+      <div class="session-callback-item-when ${new Date(cb.scheduledAt) < startOfDay(new Date()) ? 'overdue' : ''}">${new Date(cb.scheduledAt) < startOfDay(new Date()) ? 'Arretrato · ' : ''}${fmtDateTime(cb.scheduledAt)}</div>
       <button class="btn-ghost session-callback-item-btn" data-call-callback="${cb.id}">Chiama</button>
     </div>`).join('');
   return `
     <aside class="session-callback-sidebar">
-      <div class="session-callback-sidebar-title">Da richiamare in questa sessione</div>
+      <div class="session-callback-sidebar-title">Da richiamare</div>
       ${itemsHtml}
     </aside>`;
 }
