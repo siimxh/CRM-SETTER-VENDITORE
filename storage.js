@@ -187,6 +187,12 @@ function migrateAppointment(a) {
     recoveredFromNoShow: false, // true se creato dal Round Recupero No Show (vedi app.js)
     recoveredFromRole: null,    // 'setter' | 'venditore' — dove è avvenuto il no-show originale
 
+    // --- Appuntamento spostato (vedi app.js, openRescheduleModal) — il vecchio
+    // appuntamento resta con esito "Spostato" e punta al nuovo (rescheduledToId); il
+    // nuovo punta al vecchio (rescheduledFromId) e NON conta come appuntamento in più.
+    rescheduledFromId: null,
+    rescheduledToId: null,
+
     // --- Round Conferme (solo Setter, vedi app.js) — stato di rotazione/chiamata per
     // questo specifico appuntamento. confirmGroupId identifica "questa chiamata di
     // conferma" ai fini di computeStats (tutte le chiamate fatte per confermare QUESTO

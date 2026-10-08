@@ -1234,6 +1234,17 @@ body.in-session #topbar { display: none; }
 .crm-chip.active { background: var(--accent); border-color: var(--accent); color: #0b0c0a; }
 .crm-chip.active.danger-chip { background: var(--danger); border-color: var(--danger); color: #fff; }
 .crm-chip.active.annullato-chip { background: var(--text-dim); border-color: var(--text-dim); color: var(--bg); }
+.crm-chip.active.spostato-chip { background: var(--stage-spostato, #7c5cc4); border-color: var(--stage-spostato, #7c5cc4); color: var(--bg); }
+
+/* Appuntamento spostato: la riga vecchia resta visibile ma attenuata, con badge verso la nuova data. */
+tr.appt-row-moved > td { opacity: 0.6; }
+.moved-badge {
+  display: inline-block;
+  margin-top: 5px;
+  color: var(--stage-spostato, #7c5cc4);
+  background: var(--stage-spostato-bg, rgba(124,92,196,0.16));
+  font-size: 0.62rem;
+}
 .crm-row-actions { display: flex; gap: 6px; align-items: flex-start; padding-top: 14px; }
 .crm-row-del { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.05rem; line-height: 1; padding: 2px 4px; }
 .crm-row-del:hover { color: var(--danger); }
@@ -1288,6 +1299,8 @@ body.in-session #topbar { display: none; }
   --stage-chiuso-bg: rgba(31,92,31,0.18);
   --stage-perso: #c23b3b;              /* rosso */
   --stage-perso-bg: rgba(194,59,59,0.16);
+  --stage-spostato: #7c5cc4;           /* viola — appuntamento spostato */
+  --stage-spostato-bg: rgba(124,92,196,0.16);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -1297,6 +1310,7 @@ body.in-session #topbar { display: none; }
     --stage-contratto_firmato: #9be564;
     --stage-chiuso: #4ade80;
     --stage-perso: #ff5c5c;
+    --stage-spostato: #b49cff;
   }
 }
 :root[data-theme="dark"] {
@@ -1306,6 +1320,7 @@ body.in-session #topbar { display: none; }
   --stage-contratto_firmato: #9be564;
   --stage-chiuso: #4ade80;
   --stage-perso: #ff5c5c;
+  --stage-spostato: #b49cff;
 }
 
 .deal-stage-select {
@@ -1328,6 +1343,7 @@ body.in-session #topbar { display: none; }
 .deal-stage-select[data-stage="contratto_firmato"] { color: var(--stage-contratto_firmato); background: var(--stage-contratto_firmato-bg); border-color: var(--stage-contratto_firmato); }
 .deal-stage-select[data-stage="chiuso"] { color: var(--stage-chiuso); background: var(--stage-chiuso-bg); border-color: var(--stage-chiuso); }
 .deal-stage-select[data-stage="perso"] { color: var(--stage-perso); background: var(--stage-perso-bg); border-color: var(--stage-perso); }
+.deal-stage-select[data-stage="spostato"] { color: var(--stage-spostato); background: var(--stage-spostato-bg); border-color: var(--stage-spostato); }
 
 .vnd-actions-cell { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .vnd-note-btn, .vnd-followup-btn {
@@ -1421,6 +1437,7 @@ body.in-session #topbar { display: none; }
 .cal-appt-pill.cal-appt-presented { background: var(--tag-conv-bg); color: var(--success); border-color: var(--success); }
 .cal-appt-pill.cal-appt-noshow { background: rgba(184,134,11,0.16); color: var(--stage-no_show, #b8860b); border-color: var(--stage-no_show, #b8860b); }
 .cal-appt-pill.cal-appt-annullato { background: var(--bg-elev2); color: var(--text-dim); border-color: var(--text-dim); text-decoration: line-through; }
+.cal-appt-pill.cal-appt-spostato { background: var(--stage-spostato-bg, rgba(124,92,196,0.16)); color: var(--stage-spostato, #7c5cc4); border-color: var(--stage-spostato, #7c5cc4); text-decoration: line-through; }
 
 .cal-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .cal-legend-item {
@@ -1431,6 +1448,7 @@ body.in-session #topbar { display: none; }
 .cal-legend-item.cal-appt-presented { background: var(--tag-conv-bg); color: var(--success); border-color: var(--success); }
 .cal-legend-item.cal-appt-noshow { background: rgba(184,134,11,0.16); color: var(--stage-no_show, #b8860b); border-color: var(--stage-no_show, #b8860b); }
 .cal-legend-item.cal-appt-annullato { background: var(--bg-elev2); color: var(--text-dim); border-color: var(--text-dim); }
+.cal-legend-item.cal-appt-spostato { background: var(--stage-spostato-bg, rgba(124,92,196,0.16)); color: var(--stage-spostato, #7c5cc4); border-color: var(--stage-spostato, #7c5cc4); }
 
 .installments-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 .installment-row { display: grid; grid-template-columns: 1fr 100px 130px 90px 130px auto; gap: 8px; align-items: center; font-size: 0.82rem; }

@@ -1258,7 +1258,7 @@ function renderPersonalBestBadge() {
 
 /* ---------- Streak giornaliero (toggle 4) ---------- */
 function computeStreak() {
-  const daysWithAppt = new Set(db.appointments.map(a => dateInputValue(a.createdAt)));
+  const daysWithAppt = new Set(db.appointments.filter(a => !a.rescheduledFromId).map(a => dateInputValue(a.createdAt)));
   let streak = 0;
   let cursor = new Date();
   while (daysWithAppt.has(dateInputValue(cursor))) {
@@ -1325,6 +1325,8 @@ function buildAppointmentsReportText(rows, filterLabel) {
     if (a.presentedStatus === 'presented') return 'Presentato';
     if (a.presentedStatus === 'confirmed24h') return 'Confermato24h';
     if (a.presentedStatus === 'no_show') return 'No Show';
+    if (a.presentedStatus === 'annullato') return 'Annullato';
+    if (a.presentedStatus === 'spostato') return 'Spostato';
     return 'No';
   };
 
@@ -2129,7 +2131,8 @@ function getPendingConfirmAppointments() {
     a.role === 'setter' &&
     dateInputValue(a.scheduledAt) === tomorrowKey &&
     a.presentedStatus !== 'confirmed24h' &&
-    a.presentedStatus !== 'annullato'
+    a.presentedStatus !== 'annullato' &&
+    a.presentedStatus !== 'spostato'
   );
 }
 
@@ -2432,8 +2435,9 @@ function applyConfirmOutcome(apptId, outcome) {
   }
 }
 
-/** "Appuntamento spostato": chiede la nuova data/ora, logga la chiamata, sposta
- * scheduledAt e azzera lo stato di rotazione/gruppo (è di fatto un nuovo slot). */
+/** "Appuntamento spostato" (Round Conferme): chiede la nuova data/ora, logga la chiamata
+ * e sposta l'appuntamento con rescheduleAppointment (il vecchio resta "Spostato", ne
+ * nasce uno nuovo con rotazione/gruppo a zero — è di fatto un nuovo slot). */
 function openConfirmMoveModal(apptId) {
   const apt = db.appointments.find(a => a.id === apptId);
   if (!apt) return;
@@ -2443,6 +2447,7 @@ function openConfirmMoveModal(apptId) {
     <h3>Appuntamento spostato</h3>
     <p class="text-dim" style="font-size:0.85rem;">A quando è stato spostato l'appuntamento di "${escapeHtml(apt.clientName || '(senza nome)')}"?</p>
     <label class="field">Nuova data e ora<input type="datetime-local" id="confirmMoveWhen" value="${currentVal}"></label>
+    <p class="text-dim" style="font-size:0.78rem;">Il vecchio appuntamento resta segnato come "Spostato". Ne viene creato uno nuovo alla nuova data. Nei dati conta come un solo appuntamento.</p>
     <div class="modal-actions">
       <button class="btn-ghost" id="confirmMoveCancelBtn">Annulla</button>
       <button class="btn-primary" id="confirmMoveConfirmBtn">Salva</button>
@@ -2461,12 +2466,10 @@ function openConfirmMoveModal(apptId) {
       groupId: apt.confirmGroupId, isConfirmCall: true
     });
 
-    apt.scheduledAt = when;
-    // Nuovo slot -> si riparte da zero su gruppo/tentativi/rotazione per questo appuntamento.
-    apt.confirmGroupId = null;
-    apt.confirmCallAttempts = 0;
+    // Stessa regola della tabella Appuntamenti: il vecchio resta "Spostato", ne nasce uno
+    // nuovo alla nuova data (con gruppo/tentativi/rotazione a zero — è un nuovo slot).
     apt.confirmRetryPending = false;
-    apt.confirmLastInteractionAt = null;
+    rescheduleAppointment(apt, when);
 
     db.confirmRoundCurrentApptId = null;
     persist();
@@ -2597,6 +2600,8 @@ function newAppointment(role) {
     nextFollowUpDate: null,   // solo Venditore — YYYY-MM-DD (solo data, non ora)
     recoveredFromNoShow: false, // true se creato dal Round Recupero No Show
     recoveredFromRole: null,    // 'setter' | 'venditore' — ruolo in cui è avvenuto il no-show originale
+    rescheduledFromId: null,    // vedi openRescheduleModal — appuntamento da cui è stato spostato
+    rescheduledToId: null,      // vedi openRescheduleModal — nuovo appuntamento creato dallo spostamento
     confirmGroupId: null,       // vedi Round Conferme più sotto
     confirmCallAttempts: 0,
     confirmRetryPending: false,
@@ -2618,9 +2623,105 @@ const DEAL_STAGES = [
   { key: 'trattativa',        label: 'Trattativa',        color: 'sky',      isClosed: false, isPresented: true },
   { key: 'contratto_firmato', label: 'Contratto Firmato', color: 'mint',     isClosed: true,  isPresented: true },
   { key: 'chiuso',            label: 'Chiuso',            color: 'forest',   isClosed: true,  isPresented: true },
-  { key: 'perso',             label: 'Perso',             color: 'crimson',  isClosed: false, isPresented: true }
+  { key: 'perso',             label: 'Perso',             color: 'crimson',  isClosed: false, isPresented: true },
+  // "Spostato": l'appuntamento non si è svolto in questa data ma è stato riprogrammato —
+  // né presentato né no-show. Selezionarlo apre openRescheduleModal (nuova data).
+  { key: 'spostato',          label: 'Spostato',          color: 'violet',   isClosed: false, isPresented: false }
 ];
 function dealStageDef(key) { return DEAL_STAGES.find(s => s.key === key) || null; }
+
+/* ============================================================================
+ * Appuntamento spostato (Setter e Venditore) — richiesto esplicitamente dall'utente.
+ * Regole:
+ * - Il vecchio appuntamento RESTA in tabella con esito "Spostato" (Setter:
+ *   presentedStatus, Venditore: dealStage).
+ * - Viene creato un NUOVO appuntamento con la nuova data, stesso lead, ancora da esitare.
+ * - Ai fini di dati e statistiche è UN SOLO appuntamento: il nuovo ha rescheduledFromId
+ *   e non conta come fissato/assegnato (vedi utils.js isCountedAsNewBooking); il vecchio
+ *   non conta né come presentato né come no-show né come "svolto".
+ * ==========================================================================*/
+
+/** Sposta un appuntamento: marca il vecchio come "Spostato" e crea il nuovo alla data
+ * `when` (valore datetime-local). Restituisce il nuovo appuntamento. */
+function rescheduleAppointment(apt, when) {
+  const fresh = newAppointment(apt.role);
+  fresh.clientName = apt.clientName;
+  fresh.phone = apt.phone;
+  fresh.scheduledAt = when;
+  fresh.linkedAppointmentId = apt.linkedAppointmentId;
+  fresh.recoveredFromNoShow = apt.recoveredFromNoShow;
+  fresh.recoveredFromRole = apt.recoveredFromRole;
+  fresh.notes = (apt.notes || []).map(n => Object.assign({}, n)); // storico note Venditore
+  fresh.nextFollowUpDate = apt.nextFollowUpDate;
+  fresh.rescheduledFromId = apt.id;
+
+  if (apt.role === 'venditore') {
+    apt.dealStage = 'spostato';
+    apt.closed = false;
+    apt.closedAt = null;
+  } else {
+    apt.presentedStatus = 'spostato';
+  }
+  apt.rescheduledToId = fresh.id;
+  deactivateRecoveryEntryForAppointment(apt);
+
+  // Il nuovo va subito sopra al vecchio nella lista dati.
+  const idx = db.appointments.findIndex(a => a.id === apt.id);
+  db.appointments.splice(idx < 0 ? 0 : idx, 0, fresh);
+  return fresh;
+}
+
+/** Finestra "Appuntamento spostato": chiede la nuova data/ora. Se si annulla non cambia
+ * nulla. `onDone` ridisegna la schermata da cui è stato aperto. */
+function openRescheduleModal(apptId, onDone) {
+  const apt = db.appointments.find(a => a.id === apptId);
+  if (!apt) return;
+
+  openModal(`
+    <h3>Appuntamento spostato</h3>
+    <p class="text-dim" style="font-size:0.85rem;">A quando è stato spostato l'appuntamento di "${escapeHtml(apt.clientName || '(senza nome)')}"?</p>
+    <label class="field">Nuova data e ora<input type="datetime-local" id="rescheduleWhen" value=""></label>
+    <p class="text-dim" style="font-size:0.78rem;">Il vecchio appuntamento resta segnato come "Spostato". Ne viene creato uno nuovo alla nuova data, ancora da esitare. Nei dati conta come un solo appuntamento.</p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="rescheduleCancelBtn">Annulla</button>
+      <button class="btn-primary" id="rescheduleConfirmBtn">Salva</button>
+    </div>
+  `);
+
+  document.getElementById('rescheduleCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('rescheduleConfirmBtn').addEventListener('click', () => {
+    const when = document.getElementById('rescheduleWhen').value;
+    if (!when) { showToast('Inserisci la nuova data e ora.', true); return; }
+    rescheduleAppointment(apt, when);
+    persist();
+    closeModal();
+    showToast('Appuntamento spostato al ' + fmtDateTime(when) + '.');
+    if (typeof onDone === 'function') onDone();
+  });
+}
+
+/** Badge in tabella: sul vecchio "→ Spostato al …", sul nuovo "↻ Spostato dal …". */
+function rescheduleBadgesHtml(a) {
+  let out = '';
+  if (a.rescheduledToId) {
+    const to = db.appointments.find(x => x.id === a.rescheduledToId);
+    if (to) out += `<span class="badge moved-badge">→ Spostato al ${escapeHtml(fmtDateTime(to.scheduledAt))}</span>`;
+  }
+  if (a.rescheduledFromId) {
+    const from = db.appointments.find(x => x.id === a.rescheduledFromId);
+    if (from) out += `<span class="badge moved-badge">↻ Spostato dal ${escapeHtml(fmtDateTime(from.scheduledAt))}</span>`;
+  }
+  return out;
+}
+
+/** Eliminando uno dei due appuntamenti collegati, l'altro torna "normale": se si elimina
+ * il vecchio, il nuovo torna a contare come appuntamento (altrimenti sparirebbe dai dati). */
+function unlinkRescheduleOnDelete(apt) {
+  db.appointments.forEach(x => {
+    if (x.rescheduledFromId === apt.id) x.rescheduledFromId = null;
+    if (x.rescheduledToId === apt.id) x.rescheduledToId = null;
+  });
+}
 
 function apptTotalSold(apt) {
   // Il totale venduto è editabile direttamente, ma se ci sono rate esplicite che
@@ -2784,6 +2885,7 @@ function renderApptRow(a) {
         <button class="crm-chip ${a.presentedStatus === 'presented' ? 'active' : ''}" data-set-presented="${a.id}" data-val="presented">Presentato</button>
         <button class="crm-chip danger-chip ${a.presentedStatus === 'no_show' ? 'active' : ''}" data-set-presented="${a.id}" data-val="no_show">No Show</button>
         <button class="crm-chip annullato-chip ${a.presentedStatus === 'annullato' ? 'active' : ''}" data-set-presented="${a.id}" data-val="annullato">Annullato</button>
+        <button class="crm-chip spostato-chip ${a.presentedStatus === 'spostato' ? 'active' : ''}" data-set-presented="${a.id}" data-val="spostato">Spostato</button>
       </div>`;
 
   const closedChips = `
@@ -2799,11 +2901,12 @@ function renderApptRow(a) {
     : '';
 
   return `
-    <tr data-appt-row="${a.id}">
+    <tr data-appt-row="${a.id}" class="${a.presentedStatus === 'spostato' ? 'appt-row-moved' : ''}">
       <td>
         <input type="text" class="crm-inline-input crm-name-input" data-name-input="${a.id}" value="${escapeHtml(a.clientName || '')}" placeholder="Nome e cognome">
         <input type="text" class="crm-inline-input crm-phone-input" data-phone-input="${a.id}" value="${escapeHtml(a.phone || '')}" placeholder="Telefono (facoltativo)">
         ${recoveredBadge}
+        ${rescheduleBadgesHtml(a)}
         ${linkNote}
       </td>
       <td class="crm-cell-center"><input type="datetime-local" class="crm-inline-input crm-datetime-input" data-scheduled-input="${a.id}" value="${(a.scheduledAt || '').slice(0, 16)}"></td>
@@ -2863,6 +2966,13 @@ function wireAppuntamentiEvents() {
       const apt = db.appointments.find(x => x.id === btn.dataset.setPresented);
       if (!apt) return;
       const val = btn.dataset.val;
+      // "Spostato" non cambia subito lo stato: apre la finestra per la nuova data e
+      // crea il nuovo appuntamento (vedi openRescheduleModal). Se si annulla, resta tutto com'era.
+      if (val === 'spostato') {
+        if (apt.presentedStatus === 'spostato') { showToast('Questo appuntamento è già stato spostato.'); return; }
+        openRescheduleModal(apt.id, renderAppuntamenti);
+        return;
+      }
       apt.presentedStatus = val;
       // CORREZIONE (segnalata dall'utente): presentedAt deve seguire la data/ora
       // dell'appuntamento stesso (scheduledAt), NON il momento in cui l'utente clicca
@@ -2914,6 +3024,7 @@ function wireAppuntamentiEvents() {
       const apt = db.appointments.find(x => x.id === btn.dataset.delAppt);
       if (!apt) return;
       showConfirm(`Eliminare l'appuntamento di "${apt.clientName || '(senza nome)'}"?`, () => {
+        unlinkRescheduleOnDelete(apt);
         db.appointments = db.appointments.filter(x => x.id !== apt.id);
         persist();
         renderAppuntamenti();
@@ -3019,6 +3130,7 @@ function renderVenditoreAppuntamenti() {
         <button class="pill ${filter === 'trattativa' ? 'active' : ''}" data-crm-vnd-filter="trattativa">Trattativa</button>
         <button class="pill ${filter === 'no_show' ? 'active' : ''}" data-crm-vnd-filter="no_show">No Show</button>
         <button class="pill ${filter === 'perso' ? 'active' : ''}" data-crm-vnd-filter="perso">Perso</button>
+        <button class="pill ${filter === 'spostato' ? 'active' : ''}" data-crm-vnd-filter="spostato">Spostati</button>
       </div>
       <div class="crm-search-wrap">
         <input type="search" class="crm-search-input" id="crmVenditoreSearchInput" placeholder="Cerca per nome o telefono..." value="${escapeHtml(search)}">
@@ -3060,13 +3172,14 @@ function renderVenditoreApptRow(a) {
   const followUpLabel = a.nextFollowUpDate ? fmtDate(a.nextFollowUpDate) : 'Nessuna';
 
   return `
-    <tr data-appt-row="${a.id}">
+    <tr data-appt-row="${a.id}" class="${a.dealStage === 'spostato' ? 'appt-row-moved' : ''}">
       <td>
         <input type="text" class="crm-inline-input crm-name-input" data-name-input="${a.id}" value="${escapeHtml(a.clientName || '')}" placeholder="Nome e cognome">
         <div class="crm-phone-row">
           <input type="text" class="crm-inline-input crm-phone-input" data-phone-input="${a.id}" value="${escapeHtml(a.phone || '')}" placeholder="Telefono (facoltativo)">
           <button class="crm-copy-phone-btn" data-copy-phone="${a.id}" title="Copia numero">⧉</button>
         </div>
+        ${rescheduleBadgesHtml(a)}
       </td>
       <td class="crm-cell-center"><input type="datetime-local" class="crm-inline-input crm-datetime-input" data-scheduled-input="${a.id}" value="${(a.scheduledAt || '').slice(0, 16)}"></td>
       <td class="crm-cell-center">
@@ -3136,6 +3249,13 @@ function wireVenditoreAppuntamentiEvents() {
     sel.addEventListener('change', () => {
       const apt = db.appointments.find(x => x.id === sel.dataset.setStage);
       if (!apt) return;
+      // "Spostato": stessa logica del Setter — prima la nuova data, poi lo stato.
+      if (sel.value === 'spostato') {
+        if (apt.dealStage === 'spostato') return;
+        openRescheduleModal(apt.id, renderVenditoreAppuntamenti);
+        renderVenditoreAppuntamenti(); // rimette la tendina allo stato attuale finché non si salva
+        return;
+      }
       applyDealStage(apt, sel.value || null);
       renderVenditoreAppuntamenti();
     });
@@ -3173,6 +3293,7 @@ function wireVenditoreAppuntamentiEvents() {
       const apt = db.appointments.find(x => x.id === btn.dataset.delApptVnd);
       if (!apt) return;
       showConfirm(`Eliminare l'appuntamento di "${apt.clientName || '(senza nome)'}"?`, () => {
+        unlinkRescheduleOnDelete(apt);
         db.appointments = db.appointments.filter(x => x.id !== apt.id);
         persist();
         renderVenditoreAppuntamenti();
@@ -3670,9 +3791,10 @@ const SETTER_PRESENTED_COLOR_CLASS = {
   confirmed24h: 'cal-appt-confirmed',
   presented: 'cal-appt-presented',
   no_show: 'cal-appt-noshow',
-  annullato: 'cal-appt-annullato'
+  annullato: 'cal-appt-annullato',
+  spostato: 'cal-appt-spostato'
 };
-const SETTER_PRESENTED_LABEL = { no: 'No', confirmed24h: 'Confermato24h', presented: 'Presentato', no_show: 'No Show', annullato: 'Annullato' };
+const SETTER_PRESENTED_LABEL = { no: 'No', confirmed24h: 'Confermato24h', presented: 'Presentato', no_show: 'No Show', annullato: 'Annullato', spostato: 'Spostato' };
 
 let calModalRole = 'setter';
 let calModalMonthOffset = 0;

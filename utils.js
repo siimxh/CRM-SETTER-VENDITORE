@@ -418,9 +418,21 @@ function sumEvents(events) { return round2(events.reduce((s, e) => s + e.amount,
  * appuntamento appartiene al giorno in cui si è effettivamente svolto, non a quando è
  * stato creato nel sistema — quindi qui servono DUE sottoinsiemi distinti.
  */
+/**
+ * Appuntamento spostato (vedi app.js, rescheduleAppointment): il nuovo appuntamento nato
+ * da uno spostamento NON è un appuntamento in più — il fissaggio è già stato contato sul
+ * vecchio. Usato da tutti i conteggi "fissati/assegnati".
+ */
+function isCountedAsNewBooking(a) { return !a.rescheduledFromId; }
+
+/** true se l'appuntamento è stato spostato (esito "Spostato" in Setter o Venditore). */
+function isMovedAppointment(a) {
+  return a.role === 'venditore' ? a.dealStage === 'spostato' : a.presentedStatus === 'spostato';
+}
+
 function computeFunnelValues(db, role, range) {
   const roleAppts = (db.appointments || []).filter(a => a.role === role);
-  const fissatiAppts = roleAppts.filter(a => inRange(a.createdAt, range));
+  const fissatiAppts = roleAppts.filter(a => isCountedAsNewBooking(a) && inRange(a.createdAt, range));
   const appts = roleAppts.filter(a => inRange(a.scheduledAt, range));
   // "Presentati": per il Setter segue presentedStatus (invariato); per il Venditore
   // segue il nuovo dealStage — presentato = qualunque stato tranne No Show (vedi
@@ -528,7 +540,7 @@ function computeVenditoreStats(db, range) {
   const all = (db.appointments || []).filter(a => a.role === 'venditore');
   const inR = (a, field) => !range || inRange(a[field], range);
 
-  const assegnati = all.filter(a => inR(a, 'createdAt')).length;
+  const assegnati = all.filter(a => isCountedAsNewBooking(a) && inR(a, 'createdAt')).length;
   const scoped = all.filter(a => inR(a, 'scheduledAt'));
 
   const noShow = scoped.filter(a => a.dealStage === 'no_show').length;
@@ -589,10 +601,12 @@ function computeSetterStats(db, range) {
   const now = new Date();
   const inR = (a, field) => !range || inRange(a[field], range);
 
-  const fissatiAppts = all.filter(a => inR(a, 'createdAt'));
+  const fissatiAppts = all.filter(a => isCountedAsNewBooking(a) && inR(a, 'createdAt'));
   const scoped = all.filter(a => inR(a, 'scheduledAt'));
 
-  const svolti = scoped.filter(a => a.scheduledAt && new Date(a.scheduledAt) <= now);
+  // Un appuntamento spostato non si è svolto in quella data: non entra negli "svolti"
+  // (altrimenti abbasserebbe lo show-up rate). Conta il nuovo, quando si svolge.
+  const svolti = scoped.filter(a => !isMovedAppointment(a) && a.scheduledAt && new Date(a.scheduledAt) <= now);
   const presentati = scoped.filter(a => a.presentedStatus === 'presented');
   const presentatiSvolti = svolti.filter(a => a.presentedStatus === 'presented');
 
@@ -604,7 +618,7 @@ function computeSetterStats(db, range) {
   let spanStart = range ? range.start : null;
   const spanEnd = range ? range.end : now;
   if (!range) {
-    const earliest = all.reduce((min, a) => {
+    const earliest = all.filter(isCountedAsNewBooking).reduce((min, a) => {
       const d = new Date(a.createdAt);
       return (!min || d < min) ? d : min;
     }, null);
