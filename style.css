@@ -1798,3 +1798,10 @@ body.font-archivo, body.font-archivo h1, body.font-archivo h2, body.font-archivo
 /* Pennetta ✎ per modificare un "Da richiamare" (sidebar sessione ed elenco). */
 .callback-edit-btn { background: none; border: none; padding: 0 4px; margin-left: 6px; cursor: pointer; color: var(--text-dim); font-size: 0.95rem; line-height: 1; }
 .callback-edit-btn:hover { color: var(--accent); }
+
+/* Lista appuntamenti fissati in sessione, sotto i bottoni esito. */
+.sess-apt-list { margin-top: 18px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; background: var(--bg-elev); }
+.sess-apt-title { font-size: 0.85rem; font-weight: 700; color: var(--text-dim); margin-bottom: 8px; }
+.sess-apt-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; margin-bottom: 6px; }
+.sess-apt-row:last-child { margin-bottom: 0; }
+@media (max-width: 700px) { .sess-apt-row { grid-template-columns: 1fr; } }

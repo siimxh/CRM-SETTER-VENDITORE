@@ -4152,6 +4152,8 @@ function renderSessioneAttiva() {
           <div class="session-breakdown">${breakdownHtml}</div>
 
           <div class="outcome-grid">${buttonsHtml}</div>
+
+          ${renderSessionApptList(s)}
         </div>
       </div>
     </div>
@@ -4171,6 +4173,20 @@ function renderSessioneAttiva() {
   appRoot.querySelectorAll('[data-edit-callback]').forEach(btn => {
     btn.addEventListener('click', () => openEditCallbackModal(btn.dataset.editCallback, () => renderRoute()));
   });
+  // Lista appuntamenti fissati in sessione: si salva al cambio campo, senza ridisegnare
+  // la schermata (così non si perde quello che stai scrivendo).
+  appRoot.querySelectorAll('[data-sess-apt]').forEach(input => {
+    input.addEventListener('change', () => {
+      const apt = db.appointments.find(a => a.id === input.dataset.sessApt);
+      if (!apt) return;
+      const field = input.dataset.field;
+      const val = input.value.trim();
+      if (field === 'clientName' && !val) { input.value = apt.clientName || ''; return; }
+      apt[field] = field === 'phone' ? (val || '') : val;
+      persist();
+      showToast('Appuntamento aggiornato.');
+    });
+  });
   appRoot.querySelectorAll('[data-call-callback]').forEach(btn => {
     btn.addEventListener('click', () => { if (!db.activeSession.pausedAt) startCallbackCall(btn.dataset.callCallback); });
   });
@@ -4180,7 +4196,25 @@ function renderSessioneAttiva() {
   sessionTimerInterval = setInterval(updateSessionTimer, 1000);
 }
 
-/** Colonna laterale "Da richiamare in questa sessione" — vedi renderSessioneAttiva. */
+/** Lista breve sotto gli esiti (Simone, 2026-10-08): gli appuntamenti fissati in QUESTA
+ * sessione, con nome e cognome, telefono e data modificabili al volo. */
+function renderSessionApptList(s) {
+  const appts = (db.appointments || []).filter(a => a.sourceSessionId === s.id);
+  if (!appts.length) return '';
+  const rows = appts.map(a => `
+    <div class="sess-apt-row">
+      <input type="text" class="crm-inline-input" data-sess-apt="${a.id}" data-field="clientName" value="${escapeHtml(a.clientName || '')}" placeholder="Nome e cognome">
+      <input type="text" class="crm-inline-input" data-sess-apt="${a.id}" data-field="phone" value="${escapeHtml(a.phone || '')}" placeholder="Telefono">
+      <input type="datetime-local" class="crm-inline-input" data-sess-apt="${a.id}" data-field="scheduledAt" value="${(a.scheduledAt || '').slice(0, 16)}">
+    </div>`).join('');
+  return `
+    <section class="sess-apt-list">
+      <div class="sess-apt-title">Appuntamenti fissati in questa sessione (${appts.length})</div>
+      ${rows}
+    </section>`;
+}
+
+/** Colonna laterale "Da richiamare" — vedi renderSessioneAttiva. */
 function renderSessionCallbackSidebar(sessionCallbacks) {
   const itemsHtml = sessionCallbacks.map(cb => `
     <div class="session-callback-item">
@@ -4345,10 +4379,13 @@ function openAppointmentSetModal() {
     const apt = newAppointment('setter');
     apt.clientName = name;
     apt.scheduledAt = when;
+    // Sessione in cui è stato fissato: serve alla lista sotto gli esiti (vedi renderSessionApptList).
+    apt.sourceSessionId = db.activeSession ? db.activeSession.id : null;
     db.appointments.unshift(apt);
     persist();
     closeModal();
     showToast('Appuntamento aggiunto al CRM.');
+    if (db.activeSession && location.hash.indexOf('sessione') !== -1) renderSessioneAttiva();
   });
 }
 
