@@ -702,28 +702,18 @@ function renderMonthPace(role) {
 }
 
 /** Riquadro "Pace del mese" (Simone, 2026-10-08) tra il timeframe di Andamento generale
- * e i numeri: totale, Setter e Venditore. Sempre sul mese corrente. */
+ * e i numeri: solo il TOTALE (Setter + Venditore), snello come le pace accanto ai titoli
+ * degli Obiettivi. Sempre sul mese corrente. */
 function renderMonthPaceBox() {
   const ps = computeMonthPace(db, 'setter');
   const pv = computeMonthPace(db, 'venditore');
-  const cell = (label, p, cls) => `
-    <div class="pace-box-cell ${cls}">
-      <div class="pace-box-label">${label}</div>
-      <div class="pace-box-num">€${p.pace}</div>
-      <div class="pace-box-sub">finora €${p.soFar}</div>
-    </div>`;
-  const tot = { pace: ps.pace + pv.pace, soFar: ps.soFar + pv.soFar };
   return `
     <section class="card pace-box">
-      <div class="pace-box-head">
-        <span class="pace-box-title">Pace del mese</span>
-        <span class="pace-box-hint">a questo ritmo chiudi il mese così · giorno lavorativo ${ps.elapsed} di ${ps.total} (lun-ven)</span>
-      </div>
-      <div class="pace-box-grid">
-        ${cell('Totale', tot, 'tot')}
-        ${cell('Setter', ps, 'setter')}
-        ${cell('Venditore', pv, 'venditore')}
-      </div>
+      <span class="month-pace">
+        <span class="month-pace-label">Pace mese totale</span>
+        <span class="month-pace-num">€${ps.pace + pv.pace}</span>
+        <span class="month-pace-sub">finora €${ps.soFar + pv.soFar} · giorno ${ps.elapsed} di ${ps.total} (lun-ven)</span>
+      </span>
     </section>`;
 }
 
