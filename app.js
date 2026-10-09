@@ -2263,12 +2263,38 @@ function getTomorrowDateKey() {
   return dateInputValue(d);
 }
 
-/** Appuntamenti Setter di domani ancora da confermare (né confermati né annullati). */
+/**
+ * Giorni da confermare oggi (Simone, 2026-10-09): gli appuntamenti del PROSSIMO GIORNO
+ * LAVORATIVO, più eventuali sabato/domenica in mezzo. Lun-gio = domani; venerdì = sabato,
+ * domenica e lunedì; sabato = domenica e lunedì; domenica = lunedì.
+ */
+function getConfirmTargetDateKeys() {
+  const keys = [];
+  const d = new Date();
+  for (let i = 0; i < 7; i++) {
+    d.setDate(d.getDate() + 1);
+    keys.push(dateInputValue(d));
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) break;
+  }
+  return keys;
+}
+
+/** "domani" oppure il nome del giorno ("lunedì") quando si conferma oltre il weekend. */
+function getConfirmTargetLabel() {
+  const keys = getConfirmTargetDateKeys();
+  if (keys.length === 1) return 'domani';
+  const last = new Date(keys[keys.length - 1] + 'T12:00');
+  return last.toLocaleDateString('it-IT', { weekday: 'long' });
+}
+
+/** Appuntamenti Setter del prossimo giorno lavorativo (vedi getConfirmTargetDateKeys)
+ * ancora da confermare (né confermati né annullati). */
 function getPendingConfirmAppointments() {
-  const tomorrowKey = getTomorrowDateKey();
+  const targetKeys = getConfirmTargetDateKeys();
   return db.appointments.filter(a =>
     a.role === 'setter' &&
-    dateInputValue(a.scheduledAt) === tomorrowKey &&
+    targetKeys.indexOf(dateInputValue(a.scheduledAt)) !== -1 &&
     a.presentedStatus !== 'confirmed24h' &&
     a.presentedStatus !== 'annullato' &&
     a.presentedStatus !== 'spostato'
@@ -2323,7 +2349,7 @@ function renderConfirmRoundEntryCard() {
     <section class="card recov-entry-card confirm-variant">
       <div class="recov-entry-info">
         <h3>✅ Round Conferme</h3>
-        <p class="text-dim" style="font-size:0.84rem;">Richiama gli appuntamenti di domani ancora da confermare, uno alla volta, finché non sono tutti confermati (24h prima).</p>
+        <p class="text-dim" style="font-size:0.84rem;">Richiama gli appuntamenti di ${getConfirmTargetLabel()} ancora da confermare, uno alla volta, finché non sono tutti confermati (24h prima).</p>
       </div>
       <div class="recov-entry-action">
         <div class="recov-entry-count">${waiting}</div>
@@ -2354,7 +2380,7 @@ function wireConfirmRoundEntryCard() {
 function openConfirmRoundPromptModal(pipelineId, count) {
   openModal(`
     <h3>Round di conferme</h3>
-    <p>Hai <strong>${count}</strong> appuntament${count === 1 ? 'o' : 'i'} di domani ancora da confermare. Vuoi farlo ora, prima di iniziare la sessione?</p>
+    <p>Hai <strong>${count}</strong> appuntament${count === 1 ? 'o' : 'i'} di ${getConfirmTargetLabel()} ancora da confermare. Vuoi farlo ora, prima di iniziare la sessione?</p>
     <div class="modal-actions">
       <button class="btn-ghost" id="confirmRoundNoBtn">No, vai alla sessione</button>
       <button class="btn-primary" id="confirmRoundYesBtn">Sì, fai il round</button>
@@ -2400,7 +2426,7 @@ function renderConfirmRoundScreen() {
         </div>
         <div class="card" style="text-align:center; padding:60px 20px;">
           <h2>Tutto confermato 🎉</h2>
-          <p class="text-dim">Non ci sono appuntamenti di domani ancora da confermare.</p>
+          <p class="text-dim">Non ci sono appuntamenti di ${getConfirmTargetLabel()} ancora da confermare.</p>
         </div>
       </div>`;
     document.getElementById('btnExitConfirmRound').addEventListener('click', exitConfirmRound);
@@ -2636,7 +2662,10 @@ function fmtItalianHourPhrase(d) {
 function buildWhatsAppConfirmMessage(apt) {
   const firstName = (apt.clientName || '').trim().split(/\s+/)[0] || '';
   const orarioPhrase = fmtItalianHourPhrase(apt.scheduledAt);
-  return CONFIRM_WHATSAPP_TEMPLATE.replace('{nome}', firstName).replace('{ora}', orarioPhrase);
+  // Oltre il weekend "domani" diventa il giorno vero ("lunedì").
+  const giorno = dateInputValue(apt.scheduledAt) === getTomorrowDateKey() ? 'domani' : new Date(apt.scheduledAt).toLocaleDateString('it-IT', { weekday: 'long' });
+  const Giorno = giorno.charAt(0).toUpperCase() + giorno.slice(1);
+  return CONFIRM_WHATSAPP_TEMPLATE.replace('domani {ora}', `${giorno} {ora}`).replace('Domani mattina', `${Giorno} mattina`).replace('{nome}', firstName).replace('{ora}', orarioPhrase);
 }
 
 /**
@@ -2681,7 +2710,7 @@ function renderConfirmAlertBanner() {
   el.innerHTML = `
     <button class="confirm-alert-toggle" id="confirmAlertToggle">
       <span class="blink-dot"></span>
-      <span>Hai ${pending.length} appuntament${pending.length === 1 ? 'o' : 'i'} di domani non confermat${pending.length === 1 ? 'o' : 'i'}!</span>
+      <span>Hai ${pending.length} appuntament${pending.length === 1 ? 'o' : 'i'} di ${getConfirmTargetLabel()} non confermat${pending.length === 1 ? 'o' : 'i'}!</span>
       <span class="confirm-alert-chevron">▾</span>
     </button>
     <div class="confirm-alert-list">${itemsHtml}</div>
