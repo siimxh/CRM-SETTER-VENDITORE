@@ -4173,6 +4173,9 @@ function renderSessioneAttiva() {
   appRoot.querySelectorAll('[data-edit-callback]').forEach(btn => {
     btn.addEventListener('click', () => openEditCallbackModal(btn.dataset.editCallback, () => renderRoute()));
   });
+  appRoot.querySelectorAll('[data-delete-callback]').forEach(btn => {
+    btn.addEventListener('click', () => removeCallback(btn.dataset.deleteCallback, () => renderRoute()));
+  });
   // Lista appuntamenti fissati in sessione: si salva al cambio campo, senza ridisegnare
   // la schermata (così non si perde quello che stai scrivendo).
   appRoot.querySelectorAll('[data-sess-apt]').forEach(input => {
@@ -4218,7 +4221,7 @@ function renderSessionApptList(s) {
 function renderSessionCallbackSidebar(sessionCallbacks) {
   const itemsHtml = sessionCallbacks.map(cb => `
     <div class="session-callback-item">
-      <div class="session-callback-item-name">${escapeHtml(cb.leadName)}<button class="callback-edit-btn" data-edit-callback="${cb.id}" title="Modifica dati del lead">✎</button></div>
+      <div class="session-callback-item-name">${escapeHtml(cb.leadName)}<button class="callback-edit-btn" data-edit-callback="${cb.id}" title="Modifica dati del lead">✎</button><button class="callback-edit-btn" data-delete-callback="${cb.id}" title="Togli dai da richiamare">🗑</button></div>
       ${cb.phone ? `<div class="session-callback-item-phone">${escapeHtml(cb.phone)}</div>` : ''}
       <div class="session-callback-item-when ${new Date(cb.scheduledAt) < startOfDay(new Date()) ? 'overdue' : ''}">${new Date(cb.scheduledAt) < startOfDay(new Date()) ? 'Arretrato · ' : ''}${fmtDateTime(cb.scheduledAt)}</div>
       <button class="btn-ghost session-callback-item-btn" data-call-callback="${cb.id}">Chiama</button>
@@ -4782,7 +4785,7 @@ function openCallbacksListModal() {
     return `
       <div class="callback-row">
         <div class="callback-row-main">
-          <div class="callback-row-name">${escapeHtml(cb.leadName || '(senza nome)')}<button class="callback-edit-btn" data-edit-callback="${cb.id}" title="Modifica dati del lead">✎</button></div>
+          <div class="callback-row-name">${escapeHtml(cb.leadName || '(senza nome)')}<button class="callback-edit-btn" data-edit-callback="${cb.id}" title="Modifica dati del lead">✎</button><button class="callback-edit-btn" data-delete-callback="${cb.id}" title="Togli dai da richiamare">🗑</button></div>
           <div class="callback-row-sub">${cb.phone ? escapeHtml(cb.phone) + ' · ' : ''}${escapeHtml(cb.sourcePipelineName || '')}</div>
         </div>
         <div class="callback-row-when ${overdue ? 'overdue' : ''}">${fmtDateTime(cb.scheduledAt)}</div>
@@ -4801,12 +4804,29 @@ function openCallbacksListModal() {
   modalRoot.querySelectorAll('[data-edit-callback]').forEach(btn => {
     btn.addEventListener('click', () => openEditCallbackModal(btn.dataset.editCallback, openCallbacksListModal));
   });
+  modalRoot.querySelectorAll('[data-delete-callback]').forEach(btn => {
+    btn.addEventListener('click', () => removeCallback(btn.dataset.deleteCallback, () => { openCallbacksListModal(); if (location.hash.indexOf('setting') !== -1) renderRoute(); }));
+  });
   modalRoot.querySelectorAll('[data-call-callback]').forEach(btn => {
     btn.addEventListener('click', () => {
       closeModal();
       startCallbackCall(btn.dataset.callCallback);
     });
   });
+}
+
+/** Cestino 🗑 su un "Da richiamare" (Simone, 2026-10-09): lo toglie dalla lista quando
+ * non vuoi più richiamarlo. Non lo cancella dai dati: passa a status 'removed', così le
+ * chiamate già fatte restano nelle statistiche. */
+function removeCallback(callbackId, onDone) {
+  const cb = (db.callbacks || []).find(c => c.id === callbackId);
+  if (!cb) return;
+  showConfirm(`Togliere "${cb.leadName || "(senza nome)"}" dai da richiamare?`, () => {
+    cb.status = 'removed';
+    persist();
+    showToast('Tolto dai da richiamare.');
+    if (onDone) onDone();
+  }, { confirmLabel: 'Togli' });
 }
 
 /** Pennetta ✎ su un "Da richiamare" (Simone, 2026-10-08): corregge nome, telefono e
