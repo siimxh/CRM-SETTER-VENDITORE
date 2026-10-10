@@ -1650,7 +1650,7 @@ function renderSessioniList() {
 
   const rows = sessions.length ? sessions.map(s => {
     const totalCalls = s.calls.length;
-    const totalLeads = s.calls.filter(c => !c.isSecondAttempt).length;
+    const totalLeads = countSessionLeads(s, db.sessions);
     const duration = (s.endedAt ? (new Date(s.endedAt) - new Date(s.startedAt)) : (Date.now() - new Date(s.startedAt))) - (s.pausedTotalMs || 0);
     return `
       <div class="session-card" data-sid="${s.id}">
@@ -1847,7 +1847,7 @@ function renderSessioneDetail(id) {
     return;
   }
   const totalCalls = s.calls.length;
-  const totalLeads = s.calls.filter(c => !c.isSecondAttempt).length;
+  const totalLeads = countSessionLeads(s, db.sessions);
   const duration = (s.endedAt ? (new Date(s.endedAt) - new Date(s.startedAt)) : (Date.now() - new Date(s.startedAt))) - (s.pausedTotalMs || 0);
   const counts = {};
   s.calls.forEach(c => { counts[c.outcomeLabel] = (counts[c.outcomeLabel] || 0) + 1; });
@@ -4104,7 +4104,7 @@ function renderSessioneAttiva() {
   const counts = {};
   s.calls.forEach(c => { counts[c.outcomeLabel] = (counts[c.outcomeLabel] || 0) + 1; });
   const totalCalls = s.calls.length;
-  const totalLeads = s.calls.filter(c => !c.isSecondAttempt).length;
+  const totalLeads = countSessionLeads(s, db.sessions);
 
   const breakdownHtml = Object.keys(counts).length
     ? Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([label, count]) =>
@@ -4521,7 +4521,7 @@ function startCallbackCall(callbackId) {
   const cb = (db.callbacks || []).find(c => c.id === callbackId);
   if (!cb) return;
   const todayKey = dateInputValue(new Date());
-  cb.inCallGroupId = (cb.createdDateKey === todayKey) ? cb.leadGroupId : uid('lead');
+  cb.inCallGroupId = (cb.createdDateKey === todayKey && cb.leadGroupId) ? cb.leadGroupId : uid('lead');
   cb.inCallAttempts = 0;
   cb.inCallRetryPending = false;
   db.callbackCallActiveId = cb.id;

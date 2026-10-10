@@ -143,6 +143,34 @@ function getFilteredSessions(db, range, pipelineId) {
  * cui lo richiami). Le chiamate più vecchie senza groupId (dati salvati prima di questa
  * modifica) usano il vecchio raggruppamento posizionale isSecondAttempt come fallback.
  */
+/**
+ * Lead "nuovi" contati in UNA sessione (contatori della sessione e della lista sessioni).
+ * Un tentativo di richiamo immediato (isSecondAttempt) non è un lead nuovo. Inoltre una
+ * chiamata a un lead "Da richiamare" fatta lo stesso giorno riusa il groupId del lead
+ * originale (vedi startCallbackCall in app.js): se quel groupId compare già in una
+ * chiamata precedente di un'ALTRA sessione, il lead è già stato contato lì e qui non
+ * conta di nuovo. Stessa logica di computeStats, ma limitata alla singola sessione.
+ */
+function countSessionLeads(s, allSessions) {
+  const seen = new Set();
+  let n = 0;
+  s.calls.forEach(c => {
+    if (c.isSecondAttempt) return;
+    if (c.groupId) {
+      if (seen.has(c.groupId)) return;
+      seen.add(c.groupId);
+      if (c.isCallbackCall) {
+        const t = new Date(c.timestamp).getTime();
+        const countedElsewhere = (allSessions || []).some(o => o !== s && o.id !== s.id &&
+          (o.calls || []).some(oc => oc.groupId === c.groupId && new Date(oc.timestamp).getTime() < t));
+        if (countedElsewhere) return;
+      }
+    }
+    n++;
+  });
+  return n;
+}
+
 function computeStats(sessions) {
   let totalCalls = 0, totalDurationMs = 0, totalSkips = 0;
   const leads = []; // ogni elemento raggruppa le chiamate (1 o più) fatte allo stesso lead
